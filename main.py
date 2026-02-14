@@ -185,11 +185,11 @@ DIV = "\n--------------------\n"
 def msg_welcome():
     ar = (
         "مرحباً بمنسوبي الشركة العربية في بوت توليد بطاقات التهنئة.\n"
-        "اضغط زر (ابدأ) للمتابعة."
+        
     )
     en = (
         "Welcome to the Greeting Card Generation Bot for AlArabia Company staff.\n"
-        "Please press the (Start) button to proceed."
+        
     )
     return ar + DIV + en
 
