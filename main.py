@@ -182,17 +182,22 @@ def validate_en(name: str) -> Tuple[bool, str]:
 DIV = "\n--------------------\n"
 
 def msg_welcome():
+    # ✅ Updated welcome message (as requested)
     ar = (
-        "مرحباً بكم في بوت توليد بطاقات التهنئة الرقمية بشركة العربية.\n\n"
-        "يمكن لكل موظف إصدار بطاقته بسرعة وبشكل مستقل — مبادرة شخصية وحل رقمي.\n"
-        "تطوير: عمرو إسماعيل"
+        "مرحباً بكم في بوت توليد بطاقات التهنئة الرقمية بشركة العربية\n\n"
+        "يمكن لكل موظف إصدار البطاقة بسرعة وبشكل مستقل – مبادرة شخصية وحل رقمي – تطوير: عمرو إسماعيل"
     )
     en = (
-        "Welcome to the Digital Greeting Card Bot at AlArabia Company.\n\n"
-        "Every employee can generate their card quickly and independently —\n"
-        "A personal initiative and digital solution.\n"
-        "Developed by Amro Ismail."
+        "Welcome to the Digital Greeting Card Bot at AlArabia Company\n\n"
+        "Every employee can issue cards quickly and on their own – "
+        "A personal initiative and digital solution – developed by Amro Ismail"
     )
+    return ar + DIV + en
+
+def msg_need_start():
+    # ✅ New message: when user sends something unknown while in menu
+    ar = "الرجاء إرسال /start للبدء من جديد."
+    en = "Please send /start to start again."
     return ar + DIV + en
 
 def msg_ask_ar():
@@ -250,6 +255,14 @@ def kb_start_card():
     return {
         "inline_keyboard": [
             [{"text": "🎉 إصدار بطاقة تهنئة / Generate Card", "callback_data": "START_CARD"}]
+        ]
+    }
+
+def kb_start_again():
+    # ✅ New: Start button so user can tap instead of typing /start
+    return {
+        "inline_keyboard": [
+            [{"text": "▶️ Start / ابدأ", "callback_data": "START"}]
         ]
     }
 
@@ -457,11 +470,11 @@ async def webhook(req: Request):
     cmd = normalize_cmd(text)
 
     # callbacks
-    if text in ("EDIT_AR", "EDIT_EN", "GEN", "START_CARD"):
+    if text in ("EDIT_AR", "EDIT_EN", "GEN", "START_CARD", "START"):
         cmd = text
 
     async with s.lock:
-        # /start: show welcome + button (do NOT ask for arabic immediately)
+        # /start OR Start button: show welcome + button (do NOT ask for arabic immediately)
         if cmd == "START":
             reset_session(s)
             tg_send_message(s.chat_id, msg_welcome(), kb_start_card())
@@ -528,7 +541,8 @@ async def webhook(req: Request):
         if s.state == STATE_CREATING:
             return {"ok": True}
 
-        # Default: guide user
-        tg_send_message(s.chat_id, msg_welcome(), kb_start_card())
-        tg_send_message(s.chat_id, "أرسل /start للبدء.\n" + DIV + "Send /start to begin.")
+        # Default:
+        # ✅ If user sends unknown text while in MENU (or any unexpected state),
+        # tell them to /start and provide a Start button.
+        tg_send_message(s.chat_id, msg_need_start(), kb_start_again())
         return {"ok": True}
