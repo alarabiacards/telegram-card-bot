@@ -1,3 +1,4 @@
+
 import os
 import io
 import json
@@ -10,10 +11,11 @@ from typing import Optional, Dict, Any, Tuple
 
 import requests
 from fastapi import FastAPI, Request
+
+from google.oauth2.credentials import Credentials
 from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 from google.auth.transport.requests import Request as GARequest
+from googleapiclient.discovery import build
 
 # ---------------------------
 # Logging
@@ -26,12 +28,23 @@ log = logging.getLogger("telegram-card-bot")
 # ---------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 TEMPLATE_SLIDES_ID = os.getenv("TEMPLATE_SLIDES_ID", "").strip()
-OUTPUT_FOLDER_ID = os.getenv("OUTPUT_FOLDER_ID", "").strip()
+OUTPUT_FOLDER_ID = os.getenv("OUTPUT_FOLDER_ID", "").strip()  # not used now, kept for compatibility
+
+# OAuth (recommended)
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+GOOGLE_REFRESH_TOKEN = os.getenv("GOOGLE_REFRESH_TOKEN", "").strip()
+
+# fallback Service Account (optional)
 SERVICE_ACCOUNT_JSON = os.getenv("SERVICE_ACCOUNT_JSON", "").strip()
 
-# Placeholders must match Slides template exactly
 PLACEHOLDER_AR = os.getenv("PLACEHOLDER_AR", "<<Name in Arabic>>")
 PLACEHOLDER_EN = os.getenv("PLACEHOLDER_EN", "<<Name in English>>")
+
+SCOPES = [
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/presentations",
+]
 
 # ---------------------------
 # App
@@ -42,18 +55,14 @@ app = FastAPI()
 # Telegram helpers
 # ---------------------------
 TG_API = "https://api.telegram.org/bot{}/{}"
-HTTP_TIMEOUT = 15
+HTTP_TIMEOUT = 20
 
 def tg(method: str, data: Optional[dict] = None, files: Optional[dict] = None) -> requests.Response:
     url = TG_API.format(BOT_TOKEN, method)
-    try:
-        r = requests.post(url, data=data, files=files, timeout=HTTP_TIMEOUT)
-        if r.status_code != 200:
-            log.warning("TG error %s %s: %s", method, r.status_code, r.text[:500])
-        return r
-    except Exception as e:
-        log.exception("TG request failed: %s", e)
-        raise
+    r = requests.post(url, data=data, files=files, timeout=HTTP_TIMEOUT)
+    if r.status_code != 200:
+        log.warning("TG error %s %s: %s", method, r.status_code, r.text[:800])
+    return r
 
 def tg_send_message(chat_id: str, text: str, reply_markup: Optional[dict] = None) -> Optional[int]:
     payload = {"chat_id": chat_id, "text": text}
@@ -94,15 +103,15 @@ def require_env():
         raise RuntimeError("BOT_TOKEN is missing")
     if not TEMPLATE_SLIDES_ID:
         raise RuntimeError("TEMPLATE_SLIDES_ID is missing")
-    if not OUTPUT_FOLDER_ID:
-        raise RuntimeError("OUTPUT_FOLDER_ID is missing")
-    if not SERVICE_ACCOUNT_JSON:
-        raise RuntimeError("SERVICE_ACCOUNT_JSON is missing")
+
+    # OAuth preferred (fix quota problems)
+    if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN) and not SERVICE_ACCOUNT_JSON:
+        raise RuntimeError("Provide OAuth vars (GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN) or SERVICE_ACCOUNT_JSON")
 
 def build_clients():
     global _drive, _slides, _creds
+
     if _drive and _slides and _creds:
-        # refresh if needed
         try:
             if not _creds.valid or _creds.expired:
                 _creds.refresh(GARequest())
@@ -110,24 +119,36 @@ def build_clients():
             pass
         return _drive, _slides, _creds
 
+    # OAuth user credentials
+    if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN:
+        creds = Credentials(
+            token=None,
+            refresh_token=GOOGLE_REFRESH_TOKEN,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=GOOGLE_CLIENT_ID,
+            client_secret=GOOGLE_CLIENT_SECRET,
+            scopes=SCOPES,
+        )
+        creds.refresh(GARequest())
+        drive = build("drive", "v3", credentials=creds, cache_discovery=False)
+        slides = build("slides", "v1", credentials=creds, cache_discovery=False)
+        _drive, _slides, _creds = drive, slides, creds
+        log.info("Using OAuth user credentials")
+        return drive, slides, creds
+
+    # Service Account fallback
     info = json.loads(SERVICE_ACCOUNT_JSON)
-    creds = service_account.Credentials.from_service_account_info(
-        info,
-        scopes=[
-            "https://www.googleapis.com/auth/drive",
-            "https://www.googleapis.com/auth/presentations",
-        ],
-    )
+    creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     drive = build("drive", "v3", credentials=creds, cache_discovery=False)
     slides = build("slides", "v1", credentials=creds, cache_discovery=False)
     _drive, _slides, _creds = drive, slides, creds
+    log.info("Using Service Account credentials")
     return drive, slides, creds
 
 # ---------------------------
-# Validation (flexible but safe)
+# Validation
 # ---------------------------
 MAX_NAME_LEN = 40
-
 AR_ALLOWED = re.compile(r"^[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF\s\-'.0-9]+$")
 EN_ALLOWED = re.compile(r"^[A-Za-z\s\-'.0-9]+$")
 
@@ -142,9 +163,8 @@ def validate_ar(name: str) -> Tuple[bool, str]:
         return False, "الاسم العربي فارغ."
     if len(name) > MAX_NAME_LEN:
         return False, f"الاسم طويل جدًا (أقصى {MAX_NAME_LEN} حرف)."
-    # flexible: allow digits / hyphen / apostrophe / dot
     if not AR_ALLOWED.match(name):
-        return False, "اكتب الاسم بالعربية (مع مسافات فقط)، بدون رموز غريبة."
+        return False, "اكتب الاسم بالعربية بدون رموز غريبة."
     return True, name
 
 def validate_en(name: str) -> Tuple[bool, str]:
@@ -162,7 +182,6 @@ def validate_en(name: str) -> Tuple[bool, str]:
 # ---------------------------
 DIV = "\n--------------------\n"
 
-# ✅ تعديل الترحيب الرسمي بدون ايموجي (هذا التعديل الوحيد في النص)
 def msg_welcome():
     ar = (
         "مرحباً بمنسوبي الشركة العربية في بوت توليد بطاقات التهنئة.\n"
@@ -175,91 +194,75 @@ def msg_welcome():
     return ar + DIV + en
 
 def msg_ask_ar():
-    ar = "✍️ اكتب اسمك بالعربية:\nمثال: محمد أحمد"
-    en = "✍️ Enter your name in Arabic:\nExample: محمد أحمد"
+    ar = "اكتب اسمك بالعربية:"
+    en = "Enter your name in Arabic:"
     return ar + DIV + en
 
 def msg_ask_en():
-    ar = "✍️ الآن اكتب اسمك بالإنجليزية:\nمثال: Mohammed Ahmed"
-    en = "✍️ Now enter your name in English:\nExample: Mohammed Ahmed"
+    ar = "اكتب اسمك بالإنجليزية:"
+    en = "Enter your name in English:"
     return ar + DIV + en
 
 def msg_invalid_ar(reason_ar: str):
-    ar = f"❌ غير صحيح: {reason_ar}\n\nاكتب الاسم بالعربية فقط."
-    en = "❌ Invalid Arabic name.\n\nPlease type Arabic letters only."
+    ar = f"غير صحيح: {reason_ar}\n\nاكتب الاسم بالعربية فقط."
+    en = "Invalid Arabic name.\n\nPlease type Arabic letters only."
     return ar + DIV + en
 
 def msg_invalid_en(reason_ar: str):
-    ar = f"❌ غير صحيح: {reason_ar}\n\nاكتب الاسم بالإنجليزية فقط."
-    en = "❌ Invalid English name.\n\nPlease type English letters only."
+    ar = f"غير صحيح: {reason_ar}\n\nاكتب الاسم بالإنجليزية فقط."
+    en = "Invalid English name.\n\nPlease type English letters only."
     return ar + DIV + en
 
 def msg_confirm(name_ar: str, name_en: str):
     ar = (
-        "✅ تأكيد البيانات\n\n"
+        "تأكيد البيانات:\n\n"
         f"الاسم بالعربية: {name_ar}\n"
         f"الاسم بالإنجليزية: {name_en}\n\n"
-        "اختر: توليد البطاقة أو تعديل الاسم."
+        "اختر أحد الخيارات:"
     )
     en = (
-        "✅ Confirm details\n\n"
+        "Confirm details:\n\n"
         f"Arabic: {name_ar}\n"
         f"English: {name_en}\n\n"
-        "Choose: Generate card or edit."
+        "Choose an option:"
     )
-    return ar + DIV + en
-
-def msg_queued(pos: int):
-    # "غير مزعج": رسالة واحدة فقط عند إدخال الطابور
-    ar = f"🕘 تم استلام طلبك.\nجاري وضعه في الطابور… (رقمك: {pos})"
-    en = f"🕘 Request received.\nQueued… (Your position: {pos})"
     return ar + DIV + en
 
 def msg_creating():
-    ar = "⏳ جاري توليد البطاقة…"
-    en = "⏳ Generating your card…"
+    ar = "جاري توليد البطاقة..."
+    en = "Generating your card..."
     return ar + DIV + en
 
 def msg_ready():
-    ar = "✨ بطاقتك جاهزة ✨"
-    en = "✨ Your card is ready ✨"
+    ar = "تم إنشاء البطاقة."
+    en = "Your card is ready."
     return ar + DIV + en
 
 def msg_error(err: str):
-    ar = "❌ خطأ أثناء إنشاء البطاقة:\n" + err
-    en = "❌ Error while creating the card:\n" + err
+    ar = "خطأ أثناء إنشاء البطاقة:\n" + err
+    en = "Error while creating the card:\n" + err
     return ar + DIV + en
 
 # ---------------------------
-# Keyboards
+# Keyboards (keep other buttons, remove Start entirely)
 # ---------------------------
-# ✅ إزالة الإيموجي من زر البداية فقط (عشان البداية رسمية)
-def kb_welcome():
-    return {"inline_keyboard": [[{"text": "ابدأ / Start", "callback_data": "START"}]]}
-
 def kb_wait_en():
     return {
         "inline_keyboard": [
-            [{"text": "✏️ إعادة كتابة الاسم العربي / Edit Arabic", "callback_data": "EDIT_AR"}],
-            [{"text": "🏠 البداية / Home", "callback_data": "HOME"}],
+            [{"text": "إعادة كتابة الاسم العربي / Edit Arabic", "callback_data": "EDIT_AR"}],
         ]
     }
 
 def kb_confirm():
     return {
         "inline_keyboard": [
-            [{"text": "✅ توليد البطاقة / Generate", "callback_data": "GEN"}],
+            [{"text": "توليد البطاقة / Generate", "callback_data": "GEN"}],
             [
-                {"text": "✏️ تعديل العربي / Edit Arabic", "callback_data": "EDIT_AR"},
-                {"text": "✏️ تعديل الإنجليزي / Edit English", "callback_data": "EDIT_EN"},
+                {"text": "تعديل العربي / Edit Arabic", "callback_data": "EDIT_AR"},
+                {"text": "تعديل الإنجليزي / Edit English", "callback_data": "EDIT_EN"},
             ],
-            [{"text": "🏠 البداية / Home", "callback_data": "HOME"}],
         ]
     }
-
-def kb_none():
-    # remove inline keyboard (edit message with no reply_markup)
-    return None
 
 # ---------------------------
 # Session
@@ -276,7 +279,6 @@ class Session:
     state: str = STATE_MENU
     name_ar: str = ""
     name_en: str = ""
-    main_msg_id: int = 0
     last_update_id: int = 0
     last_fingerprint: str = ""
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -290,21 +292,10 @@ def get_session(chat_id: str) -> Session:
         sessions[chat_id] = s
     return s
 
-def upsert_main_message(s: Session, text: str, keyboard: Optional[dict] = None):
-    # edit if possible, else send new
-    if s.main_msg_id:
-        ok = tg_edit_message(s.chat_id, s.main_msg_id, text, keyboard)
-        if ok:
-            return
-    mid = tg_send_message(s.chat_id, text, keyboard)
-    if mid:
-        s.main_msg_id = mid
-
-def reset_to_home(s: Session):
+def reset_session(s: Session):
     s.state = STATE_MENU
     s.name_ar = ""
     s.name_en = ""
-    upsert_main_message(s, msg_welcome(), kb_welcome())
 
 # ---------------------------
 # Queue worker
@@ -332,25 +323,20 @@ async def worker_loop():
 
 async def process_job(job: Job):
     s = get_session(job.chat_id)
-    async with s.lock:
-        # show creating (edit main message)
-        s.state = STATE_CREATING
-        upsert_main_message(s, msg_creating(), kb_none())
 
-    # heavy part outside lock (but safe enough)
     try:
         png_bytes = generate_card_png(job.name_ar, job.name_en)
         tg_send_photo(job.chat_id, png_bytes, msg_ready())
         async with s.lock:
-            reset_to_home(s)
+            reset_session(s)
+
     except Exception as e:
-        err = str(e)
-        tg_send_message(job.chat_id, msg_error(err))
+        tg_send_message(job.chat_id, msg_error(str(e)))
         async with s.lock:
-            reset_to_home(s)
+            reset_session(s)
 
 # ---------------------------
-# Google: generate PNG (safe cleanup)
+# Google: generate PNG (no Drive upload)
 # ---------------------------
 def export_png(pres_id: str, slide_object_id: str, creds) -> bytes:
     if not creds.valid or creds.expired:
@@ -364,17 +350,16 @@ def export_png(pres_id: str, slide_object_id: str, creds) -> bytes:
 
 def generate_card_png(name_ar: str, name_en: str) -> bytes:
     drive, slides, creds = build_clients()
-
     pres_id = None
+
     try:
-        # copy template
         copied = drive.files().copy(
             fileId=TEMPLATE_SLIDES_ID,
-            body={"name": f"tg_card_{int(time.time())}"}
+            body={"name": f"tg_card_{int(time.time())}"},
+            supportsAllDrives=True,
         ).execute()
         pres_id = copied["id"]
 
-        # replace placeholders
         slides.presentations().batchUpdate(
             presentationId=pres_id,
             body={
@@ -385,27 +370,16 @@ def generate_card_png(name_ar: str, name_en: str) -> bytes:
             }
         ).execute()
 
-        # get first slide id
         pres = slides.presentations().get(presentationId=pres_id).execute()
         slide_id = pres["slides"][0]["objectId"]
 
-        # export
         png_bytes = export_png(pres_id, slide_id, creds)
-
-        # save to Drive (kept) — optional but requested
-        media = MediaIoBaseUpload(io.BytesIO(png_bytes), mimetype="image/png", resumable=False)
-        drive.files().create(
-            body={"name": f"card_{int(time.time())}.png", "parents": [OUTPUT_FOLDER_ID]},
-            media_body=media
-        ).execute()
-
         return png_bytes
 
     finally:
-        # delete temp presentation safely (no harm)
         if pres_id:
             try:
-                drive.files().delete(fileId=pres_id).execute()
+                drive.files().delete(fileId=pres_id, supportsAllDrives=True).execute()
             except Exception:
                 pass
 
@@ -434,17 +408,14 @@ def normalize_cmd(text: str) -> str:
     t = clean_text(text).lower()
     if t in ("/start", "start", "ابدأ", "ابدا"):
         return "START"
-    if t in ("home", "البداية", "بداية", "الرئيسية", "menu"):
-        return "HOME"
     return ""
 
 # ---------------------------
-# Web routes
+# Routes
 # ---------------------------
 @app.on_event("startup")
 async def startup():
     require_env()
-    # start background worker
     asyncio.create_task(worker_loop())
     log.info("App started")
 
@@ -457,7 +428,6 @@ async def webhook(req: Request):
     data = await req.json()
     update_id, chat_id, text_raw, msg_id, cq_id = extract_update(data)
 
-    # Always answer callback quickly (stop spinner)
     if cq_id:
         tg_answer_callback(cq_id)
 
@@ -466,7 +436,7 @@ async def webhook(req: Request):
 
     s = get_session(chat_id)
 
-    # Dedup: Telegram may retry same update if slow
+    # Dedup retries
     fp = f"{update_id}|{msg_id}|{text_raw}"
     if update_id and s.last_update_id >= update_id:
         return {"ok": True}
@@ -476,95 +446,76 @@ async def webhook(req: Request):
         s.last_update_id = update_id
     s.last_fingerprint = fp
 
-    # route input (fast, no heavy work)
     text = clean_text(text_raw)
     cmd = normalize_cmd(text)
 
-    # Map callbacks
-    if text in ("START", "HOME", "EDIT_AR", "EDIT_EN", "GEN"):
+    # callbacks
+    if text in ("EDIT_AR", "EDIT_EN", "GEN"):
         cmd = text
 
     async with s.lock:
-        # First interaction: show welcome with start button only
-        if s.state == STATE_MENU:
-            if cmd in ("START",) or (cmd == "" and text.startswith("/start")):
-                s.state = STATE_WAIT_AR
-                # Remove welcome keyboard by editing main message and no inline kb
-                upsert_main_message(s, msg_ask_ar(), kb_none())
-                return {"ok": True}
-
-            # Always ensure welcome shown (start button only)
-            upsert_main_message(s, msg_welcome(), kb_welcome())
+        # START works from any state: send welcome + ask arabic (no buttons)
+        if cmd == "START":
+            reset_session(s)
+            tg_send_message(s.chat_id, msg_welcome())
+            tg_send_message(s.chat_id, msg_ask_ar())
+            s.state = STATE_WAIT_AR
             return {"ok": True}
 
-        # HOME anywhere
-        if cmd == "HOME":
-            reset_to_home(s)
-            return {"ok": True}
-
-        # WAIT_AR: accept Arabic name
+        # WAIT_AR
         if s.state == STATE_WAIT_AR:
             ok, val = validate_ar(text)
             if not ok:
-                upsert_main_message(s, msg_invalid_ar(val), kb_none())
+                tg_send_message(s.chat_id, msg_invalid_ar(val))
                 return {"ok": True}
+
             s.name_ar = val
             s.state = STATE_WAIT_EN
-            upsert_main_message(s, msg_ask_en(), kb_wait_en())
+            tg_send_message(s.chat_id, msg_ask_en(), kb_wait_en())
             return {"ok": True}
 
-        # WAIT_EN: accept English name
+        # WAIT_EN
         if s.state == STATE_WAIT_EN:
             if cmd == "EDIT_AR":
                 s.state = STATE_WAIT_AR
-                upsert_main_message(s, msg_ask_ar(), kb_none())
+                tg_send_message(s.chat_id, msg_ask_ar())
                 return {"ok": True}
 
             ok, val = validate_en(text)
             if not ok:
-                upsert_main_message(s, msg_invalid_en(val), kb_wait_en())
+                tg_send_message(s.chat_id, msg_invalid_en(val), kb_wait_en())
                 return {"ok": True}
 
             s.name_en = val
             s.state = STATE_CONFIRM
-            upsert_main_message(s, msg_confirm(s.name_ar, s.name_en), kb_confirm())
+            tg_send_message(s.chat_id, msg_confirm(s.name_ar, s.name_en), kb_confirm())
             return {"ok": True}
 
-        # CONFIRM: generate or edit
+        # CONFIRM
         if s.state == STATE_CONFIRM:
             if cmd == "EDIT_AR":
                 s.state = STATE_WAIT_AR
-                upsert_main_message(s, msg_ask_ar(), kb_none())
+                tg_send_message(s.chat_id, msg_ask_ar())
                 return {"ok": True}
             if cmd == "EDIT_EN":
                 s.state = STATE_WAIT_EN
-                upsert_main_message(s, msg_ask_en(), kb_wait_en())
+                tg_send_message(s.chat_id, msg_ask_en(), kb_wait_en())
                 return {"ok": True}
 
             if cmd == "GEN":
-                # Enqueue job (quiet queue)
-                pos = job_queue.qsize() + 1
                 s.state = STATE_CREATING
-                upsert_main_message(s, msg_queued(pos), kb_none())
-
-                # enqueue without heavy work in webhook
+                tg_send_message(s.chat_id, msg_creating())
                 await job_queue.put(Job(chat_id=s.chat_id, name_ar=s.name_ar, name_en=s.name_en, requested_at=time.time()))
                 return {"ok": True}
 
-            # If user types something while confirm, remind
-            upsert_main_message(s, msg_confirm(s.name_ar, s.name_en), kb_confirm())
+            tg_send_message(s.chat_id, msg_confirm(s.name_ar, s.name_en), kb_confirm())
             return {"ok": True}
 
-        # CREATING: ignore extra messages, keep calm
+        # CREATING: ignore
         if s.state == STATE_CREATING:
-            # Don't spam; just one gentle note if they ask
-            if cmd == "HOME":
-                reset_to_home(s)
-            else:
-                # no extra messages by default (not annoying)
-                pass
             return {"ok": True}
 
-        # fallback
-        reset_to_home(s)
+        # If user writes anything بدون /start: نرشده بدون أزرار
+        tg_send_message(s.chat_id, msg_welcome())
+        tg_send_message(s.chat_id, "أرسل /start للبدء.\n" + DIV + "Send /start to begin.")
         return {"ok": True}
