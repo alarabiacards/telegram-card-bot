@@ -218,13 +218,11 @@ def msg_confirm(name_ar: str, name_en: str):
         "تأكيد البيانات:\n\n"
         f"الاسم بالعربية: {name_ar}\n"
         f"الاسم بالإنجليزية: {name_en}\n\n"
-        "اختر أحد الخيارات:"
     )
     en = (
         "Confirm details:\n\n"
         f"Arabic: {name_ar}\n"
         f"English: {name_en}\n\n"
-        "Choose an option:"
     )
     return ar + DIV + en
 
