@@ -1,4 +1,3 @@
-
 import os
 import io
 import json
@@ -184,11 +183,15 @@ DIV = "\n--------------------\n"
 
 def msg_welcome():
     ar = (
-        "مرحباً بمنسوبي الشركة العربية في بوت توليد بطاقات التهنئة.\n" 
+        "مرحباً بكم في بوت توليد بطاقات التهنئة الرقمية بشركة العربية.\n\n"
+        "يمكن لكل موظف إصدار بطاقته بسرعة وبشكل مستقل — مبادرة شخصية وحل رقمي.\n"
+        "تطوير: عمرو إسماعيل"
     )
     en = (
-        "Welcome to the Greeting Card Generation Bot for AlArabia Company staff.\n"
-        
+        "Welcome to the Digital Greeting Card Bot at AlArabia Company.\n\n"
+        "Every employee can generate their card quickly and independently —\n"
+        "A personal initiative and digital solution.\n"
+        "Developed by Amro Ismail."
     )
     return ar + DIV + en
 
@@ -241,8 +244,15 @@ def msg_error(err: str):
     return ar + DIV + en
 
 # ---------------------------
-# Keyboards (keep other buttons, remove Start entirely)
+# Keyboards
 # ---------------------------
+def kb_start_card():
+    return {
+        "inline_keyboard": [
+            [{"text": "🎉 إصدار بطاقة تهنئة / Generate Card", "callback_data": "START_CARD"}]
+        ]
+    }
+
 def kb_wait_en():
     return {
         "inline_keyboard": [
@@ -447,16 +457,22 @@ async def webhook(req: Request):
     cmd = normalize_cmd(text)
 
     # callbacks
-    if text in ("EDIT_AR", "EDIT_EN", "GEN"):
+    if text in ("EDIT_AR", "EDIT_EN", "GEN", "START_CARD"):
         cmd = text
 
     async with s.lock:
-        # START works from any state: send welcome + ask arabic (no buttons)
+        # /start: show welcome + button (do NOT ask for arabic immediately)
         if cmd == "START":
             reset_session(s)
-            tg_send_message(s.chat_id, msg_welcome())
-            tg_send_message(s.chat_id, msg_ask_ar())
+            tg_send_message(s.chat_id, msg_welcome(), kb_start_card())
+            s.state = STATE_MENU
+            return {"ok": True}
+
+        # button pressed: start collecting names
+        if cmd == "START_CARD":
+            reset_session(s)
             s.state = STATE_WAIT_AR
+            tg_send_message(s.chat_id, msg_ask_ar())
             return {"ok": True}
 
         # WAIT_AR
@@ -512,7 +528,7 @@ async def webhook(req: Request):
         if s.state == STATE_CREATING:
             return {"ok": True}
 
-        # If user writes anything بدون /start: نرشده بدون أزرار
-        tg_send_message(s.chat_id, msg_welcome())
+        # Default: guide user
+        tg_send_message(s.chat_id, msg_welcome(), kb_start_card())
         tg_send_message(s.chat_id, "أرسل /start للبدء.\n" + DIV + "Send /start to begin.")
         return {"ok": True}
