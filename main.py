@@ -85,7 +85,7 @@ def tg_answer_callback(callback_query_id: str) -> None:
     if callback_query_id:
         tg("answerCallbackQuery", {"callback_query_id": callback_query_id})
 
-# ✅ MODIFIED: now supports reply_markup for the photo message
+# ✅ MODIFIED: supports reply_markup for the photo message
 def tg_send_photo(chat_id: str, png_bytes: bytes, caption: str, reply_markup: Optional[dict] = None) -> None:
     files = {"photo": ("card.png", png_bytes)}
     data = {"chat_id": chat_id, "caption": caption}
@@ -284,12 +284,12 @@ def kb_confirm():
         ]
     }
 
-# ✅ NEW: button shown under the "card ready" photo
-# It starts a new card directly (asks for Arabic name), not welcome.
-def kb_another_card():
+# ✅ NEW: shown under the "card ready" photo
+# Pressing it returns to the start screen (welcome + generate button), not asking Arabic directly.
+def kb_after_ready():
     return {
         "inline_keyboard": [
-            [{"text": "🔁 إصدار بطاقة أخرى / Generate Another Card", "callback_data": "START_CARD"}]
+            [{"text": "🔁 إصدار بطاقة أخرى / Generate Another Card", "callback_data": "START"}]
         ]
     }
 
@@ -312,6 +312,9 @@ class Session:
     last_fingerprint: str = ""
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+    # ✅ NEW: sequence to invalidate old queued jobs
+    seq: int = 0
+
 sessions: Dict[str, Session] = {}
 
 def get_session(chat_id: str) -> Session:
@@ -326,6 +329,10 @@ def reset_session(s: Session):
     s.name_ar = ""
     s.name_en = ""
 
+def bump_seq(s: Session):
+    # ✅ any already queued jobs become stale/ignored
+    s.seq += 1
+
 # ---------------------------
 # Queue worker
 # ---------------------------
@@ -337,6 +344,9 @@ class Job:
     name_ar: str
     name_en: str
     requested_at: float
+
+    # ✅ NEW: job belongs to this session seq
+    seq: int
 
 async def worker_loop():
     require_env()
@@ -353,13 +363,25 @@ async def worker_loop():
 async def process_job(job: Job):
     s = get_session(job.chat_id)
 
+    # ✅ If user restarted / requested another card, ignore old job
+    async with s.lock:
+        if job.seq != s.seq:
+            log.info("Skip stale job for chat %s (job.seq=%s, current.seq=%s)", job.chat_id, job.seq, s.seq)
+            return
+
     try:
         png_bytes = generate_card_png(job.name_ar, job.name_en)
 
-        # ✅ MODIFIED: show "Generate another card" button under the photo
-        tg_send_photo(job.chat_id, png_bytes, msg_ready(), kb_another_card())
+        # ✅ Re-check before sending (user may have restarted while generating)
+        async with s.lock:
+            if job.seq != s.seq:
+                log.info("Skip sending stale result for chat %s (job.seq=%s, current.seq=%s)", job.chat_id, job.seq, s.seq)
+                return
+
+        tg_send_photo(job.chat_id, png_bytes, msg_ready(), kb_after_ready())
 
         async with s.lock:
+            # Keep seq as-is, but reset state to MENU after success
             reset_session(s)
 
     except Exception as e:
@@ -486,15 +508,17 @@ async def webhook(req: Request):
         cmd = text
 
     async with s.lock:
-        # /start OR Start button: show welcome + button (do NOT ask for arabic immediately)
+        # ✅ START: reset + invalidate any queued jobs + show welcome/menu
         if cmd == "START":
+            bump_seq(s)          # ✅ invalidate any queued/ongoing jobs
             reset_session(s)
             tg_send_message(s.chat_id, msg_welcome(), kb_start_card())
             s.state = STATE_MENU
             return {"ok": True}
 
-        # button pressed: start collecting names
+        # ✅ START_CARD: reset + invalidate any queued jobs + start collecting names
         if cmd == "START_CARD":
+            bump_seq(s)          # ✅ invalidate any queued/ongoing jobs
             reset_session(s)
             s.state = STATE_WAIT_AR
             tg_send_message(s.chat_id, msg_ask_ar())
@@ -541,17 +565,26 @@ async def webhook(req: Request):
                 return {"ok": True}
 
             if cmd == "GEN":
+                # ✅ prevent double-generate
                 s.state = STATE_CREATING
                 tg_send_message(s.chat_id, msg_creating())
+
+                # ✅ enqueue job with current seq
                 await job_queue.put(
-                    Job(chat_id=s.chat_id, name_ar=s.name_ar, name_en=s.name_en, requested_at=time.time())
+                    Job(
+                        chat_id=s.chat_id,
+                        name_ar=s.name_ar,
+                        name_en=s.name_en,
+                        requested_at=time.time(),
+                        seq=s.seq,
+                    )
                 )
                 return {"ok": True}
 
             tg_send_message(s.chat_id, msg_confirm(s.name_ar, s.name_en), kb_confirm())
             return {"ok": True}
 
-        # CREATING: ignore
+        # CREATING: ignore other texts (but START/START_CARD already handled above)
         if s.state == STATE_CREATING:
             return {"ok": True}
 
