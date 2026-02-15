@@ -1,5 +1,4 @@
 import os
-import io
 import json
 import time
 import re
@@ -85,7 +84,7 @@ def tg_answer_callback(callback_query_id: str) -> None:
     if callback_query_id:
         tg("answerCallbackQuery", {"callback_query_id": callback_query_id})
 
-# ✅ MODIFIED: supports reply_markup for the photo message
+# ✅ supports reply_markup for photo
 def tg_send_photo(chat_id: str, png_bytes: bytes, caption: str, reply_markup: Optional[dict] = None) -> None:
     files = {"photo": ("card.png", png_bytes)}
     data = {"chat_id": chat_id, "caption": caption}
@@ -106,7 +105,6 @@ def require_env():
     if not TEMPLATE_SLIDES_ID:
         raise RuntimeError("TEMPLATE_SLIDES_ID is missing")
 
-    # OAuth preferred (fix quota problems)
     if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN) and not SERVICE_ACCOUNT_JSON:
         raise RuntimeError("Provide OAuth vars (GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN) or SERVICE_ACCOUNT_JSON")
 
@@ -121,7 +119,6 @@ def build_clients():
             pass
         return _drive, _slides, _creds
 
-    # OAuth user credentials
     if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN:
         creds = Credentials(
             token=None,
@@ -138,7 +135,6 @@ def build_clients():
         log.info("Using OAuth user credentials")
         return drive, slides, creds
 
-    # Service Account fallback
     info = json.loads(SERVICE_ACCOUNT_JSON)
     creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     drive = build("drive", "v3", credentials=creds, cache_discovery=False)
@@ -284,12 +280,14 @@ def kb_confirm():
         ]
     }
 
-# ✅ NEW: shown under the "card ready" photo
-# Pressing it returns to the start screen (welcome + generate button), not asking Arabic directly.
+# ✅ Ready photo buttons (vertical):
+# 1) Another card -> asks Arabic name directly
+# 2) Start -> shows welcome screen
 def kb_after_ready():
     return {
         "inline_keyboard": [
-            [{"text": "🔁 إصدار بطاقة أخرى / Generate Another Card", "callback_data": "START"}]
+            [{"text": "🔁 إصدار بطاقة أخرى / Generate Another Card", "callback_data": "START_CARD"}],
+            [{"text": "🏠 البداية / Start", "callback_data": "START"}],
         ]
     }
 
@@ -312,7 +310,7 @@ class Session:
     last_fingerprint: str = ""
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    # ✅ NEW: sequence to invalidate old queued jobs
+    # ✅ seq invalidates queued jobs when user restarts/starts new card
     seq: int = 0
 
 sessions: Dict[str, Session] = {}
@@ -330,7 +328,6 @@ def reset_session(s: Session):
     s.name_en = ""
 
 def bump_seq(s: Session):
-    # ✅ any already queued jobs become stale/ignored
     s.seq += 1
 
 # ---------------------------
@@ -344,9 +341,7 @@ class Job:
     name_ar: str
     name_en: str
     requested_at: float
-
-    # ✅ NEW: job belongs to this session seq
-    seq: int
+    seq: int  # ✅ job belongs to session seq
 
 async def worker_loop():
     require_env()
@@ -363,7 +358,7 @@ async def worker_loop():
 async def process_job(job: Job):
     s = get_session(job.chat_id)
 
-    # ✅ If user restarted / requested another card, ignore old job
+    # ✅ Ignore stale jobs (user restarted / started new card)
     async with s.lock:
         if job.seq != s.seq:
             log.info("Skip stale job for chat %s (job.seq=%s, current.seq=%s)", job.chat_id, job.seq, s.seq)
@@ -381,7 +376,6 @@ async def process_job(job: Job):
         tg_send_photo(job.chat_id, png_bytes, msg_ready(), kb_after_ready())
 
         async with s.lock:
-            # Keep seq as-is, but reset state to MENU after success
             reset_session(s)
 
     except Exception as e:
@@ -508,17 +502,17 @@ async def webhook(req: Request):
         cmd = text
 
     async with s.lock:
-        # ✅ START: reset + invalidate any queued jobs + show welcome/menu
+        # ✅ START: show welcome/menu + invalidate any queued jobs
         if cmd == "START":
-            bump_seq(s)          # ✅ invalidate any queued/ongoing jobs
+            bump_seq(s)          # invalidate queued jobs
             reset_session(s)
             tg_send_message(s.chat_id, msg_welcome(), kb_start_card())
             s.state = STATE_MENU
             return {"ok": True}
 
-        # ✅ START_CARD: reset + invalidate any queued jobs + start collecting names
+        # ✅ START_CARD: start collecting names + invalidate any queued jobs
         if cmd == "START_CARD":
-            bump_seq(s)          # ✅ invalidate any queued/ongoing jobs
+            bump_seq(s)          # invalidate queued jobs
             reset_session(s)
             s.state = STATE_WAIT_AR
             tg_send_message(s.chat_id, msg_ask_ar())
@@ -565,18 +559,16 @@ async def webhook(req: Request):
                 return {"ok": True}
 
             if cmd == "GEN":
-                # ✅ prevent double-generate
                 s.state = STATE_CREATING
                 tg_send_message(s.chat_id, msg_creating())
 
-                # ✅ enqueue job with current seq
                 await job_queue.put(
                     Job(
                         chat_id=s.chat_id,
                         name_ar=s.name_ar,
                         name_en=s.name_en,
                         requested_at=time.time(),
-                        seq=s.seq,
+                        seq=s.seq,  # bind job to current seq
                     )
                 )
                 return {"ok": True}
@@ -584,10 +576,10 @@ async def webhook(req: Request):
             tg_send_message(s.chat_id, msg_confirm(s.name_ar, s.name_en), kb_confirm())
             return {"ok": True}
 
-        # CREATING: ignore other texts (but START/START_CARD already handled above)
+        # CREATING: ignore other texts (START/START_CARD handled above)
         if s.state == STATE_CREATING:
             return {"ok": True}
 
-        # Default:
+        # Default
         tg_send_message(s.chat_id, msg_need_start(), kb_start_again())
         return {"ok": True}
