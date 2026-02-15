@@ -85,9 +85,12 @@ def tg_answer_callback(callback_query_id: str) -> None:
     if callback_query_id:
         tg("answerCallbackQuery", {"callback_query_id": callback_query_id})
 
-def tg_send_photo(chat_id: str, png_bytes: bytes, caption: str) -> None:
+# ✅ MODIFIED: now supports reply_markup for the photo message
+def tg_send_photo(chat_id: str, png_bytes: bytes, caption: str, reply_markup: Optional[dict] = None) -> None:
     files = {"photo": ("card.png", png_bytes)}
     data = {"chat_id": chat_id, "caption": caption}
+    if reply_markup is not None:
+        data["reply_markup"] = json.dumps(reply_markup)
     tg("sendPhoto", data=data, files=files)
 
 # ---------------------------
@@ -182,7 +185,6 @@ def validate_en(name: str) -> Tuple[bool, str]:
 DIV = "\n--------------------\n"
 
 def msg_welcome():
-    # ✅ Updated welcome message (as requested)
     ar = (
         "مرحباً بكم في بوت توليد بطاقات التهنئة الرقمية بشركة العربية\n\n"
         "يمكن لكل موظف إصدار البطاقة بسرعة وبشكل مستقل – مبادرة شخصية وحل رقمي – تطوير: عمرو إسماعيل"
@@ -195,7 +197,6 @@ def msg_welcome():
     return ar + DIV + en
 
 def msg_need_start():
-    # ✅ New message: when user sends something unknown while in menu
     ar = "الرجاء إرسال /start للبدء من جديد."
     en = "Please send /start to start again."
     return ar + DIV + en
@@ -259,7 +260,6 @@ def kb_start_card():
     }
 
 def kb_start_again():
-    # ✅ New: Start button so user can tap instead of typing /start
     return {
         "inline_keyboard": [
             [{"text": "▶️ Start / ابدأ", "callback_data": "START"}]
@@ -281,6 +281,15 @@ def kb_confirm():
                 {"text": "تعديل العربي / Edit Arabic", "callback_data": "EDIT_AR"},
                 {"text": "تعديل الإنجليزي / Edit English", "callback_data": "EDIT_EN"},
             ],
+        ]
+    }
+
+# ✅ NEW: button shown under the "card ready" photo
+# It starts a new card directly (asks for Arabic name), not welcome.
+def kb_another_card():
+    return {
+        "inline_keyboard": [
+            [{"text": "🔁 إصدار بطاقة أخرى / Generate Another Card", "callback_data": "START_CARD"}]
         ]
     }
 
@@ -346,7 +355,10 @@ async def process_job(job: Job):
 
     try:
         png_bytes = generate_card_png(job.name_ar, job.name_en)
-        tg_send_photo(job.chat_id, png_bytes, msg_ready())
+
+        # ✅ MODIFIED: show "Generate another card" button under the photo
+        tg_send_photo(job.chat_id, png_bytes, msg_ready(), kb_another_card())
+
         async with s.lock:
             reset_session(s)
 
@@ -531,7 +543,9 @@ async def webhook(req: Request):
             if cmd == "GEN":
                 s.state = STATE_CREATING
                 tg_send_message(s.chat_id, msg_creating())
-                await job_queue.put(Job(chat_id=s.chat_id, name_ar=s.name_ar, name_en=s.name_en, requested_at=time.time()))
+                await job_queue.put(
+                    Job(chat_id=s.chat_id, name_ar=s.name_ar, name_en=s.name_en, requested_at=time.time())
+                )
                 return {"ok": True}
 
             tg_send_message(s.chat_id, msg_confirm(s.name_ar, s.name_en), kb_confirm())
@@ -542,7 +556,5 @@ async def webhook(req: Request):
             return {"ok": True}
 
         # Default:
-        # ✅ If user sends unknown text while in MENU (or any unexpected state),
-        # tell them to /start and provide a Start button.
         tg_send_message(s.chat_id, msg_need_start(), kb_start_again())
         return {"ok": True}
