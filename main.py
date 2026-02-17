@@ -280,9 +280,6 @@ def kb_confirm():
         ]
     }
 
-# ✅ Ready photo buttons (vertical):
-# 1) Another card -> asks Arabic name directly
-# 2) Start -> shows welcome screen
 def kb_after_ready():
     return {
         "inline_keyboard": [
@@ -309,9 +306,7 @@ class Session:
     last_update_id: int = 0
     last_fingerprint: str = ""
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-
-    # ✅ seq invalidates queued jobs when user restarts/starts new card
-    seq: int = 0
+    seq: int = 0  # ✅ invalidates queued jobs when restarting
 
 sessions: Dict[str, Session] = {}
 
@@ -341,7 +336,7 @@ class Job:
     name_ar: str
     name_en: str
     requested_at: float
-    seq: int  # ✅ job belongs to session seq
+    seq: int
 
 async def worker_loop():
     require_env()
@@ -358,7 +353,6 @@ async def worker_loop():
 async def process_job(job: Job):
     s = get_session(job.chat_id)
 
-    # ✅ Ignore stale jobs (user restarted / started new card)
     async with s.lock:
         if job.seq != s.seq:
             log.info("Skip stale job for chat %s (job.seq=%s, current.seq=%s)", job.chat_id, job.seq, s.seq)
@@ -367,7 +361,6 @@ async def process_job(job: Job):
     try:
         png_bytes = generate_card_png(job.name_ar, job.name_en)
 
-        # ✅ Re-check before sending (user may have restarted while generating)
         async with s.lock:
             if job.seq != s.seq:
                 log.info("Skip sending stale result for chat %s (job.seq=%s, current.seq=%s)", job.chat_id, job.seq, s.seq)
@@ -476,23 +469,27 @@ async def webhook(req: Request):
     data = await req.json()
     update_id, chat_id, text_raw, msg_id, cq_id = extract_update(data)
 
-    if cq_id:
-        tg_answer_callback(cq_id)
-
     if not chat_id:
         return {"ok": True}
 
     s = get_session(chat_id)
 
-    # Dedup retries
-    fp = f"{update_id}|{msg_id}|{text_raw}"
-    if update_id and s.last_update_id >= update_id:
-        return {"ok": True}
-    if s.last_fingerprint == fp:
-        return {"ok": True}
-    if update_id:
-        s.last_update_id = update_id
-    s.last_fingerprint = fp
+    # ✅ Dedup FIRST (prevents answering the same callback twice)
+    fp = f"{update_id}|{msg_id}|{cq_id or ''}|{text_raw}"
+
+    async with s.lock:
+        if update_id and s.last_update_id >= update_id:
+            return {"ok": True}
+        if s.last_fingerprint == fp:
+            return {"ok": True}
+
+        if update_id:
+            s.last_update_id = update_id
+        s.last_fingerprint = fp
+
+    # ✅ Now it's safe to answer callback (only once)
+    if cq_id:
+        tg_answer_callback(cq_id)
 
     text = clean_text(text_raw)
     cmd = normalize_cmd(text)
@@ -504,7 +501,7 @@ async def webhook(req: Request):
     async with s.lock:
         # ✅ START: show welcome/menu + invalidate any queued jobs
         if cmd == "START":
-            bump_seq(s)          # invalidate queued jobs
+            bump_seq(s)
             reset_session(s)
             tg_send_message(s.chat_id, msg_welcome(), kb_start_card())
             s.state = STATE_MENU
@@ -512,7 +509,7 @@ async def webhook(req: Request):
 
         # ✅ START_CARD: start collecting names + invalidate any queued jobs
         if cmd == "START_CARD":
-            bump_seq(s)          # invalidate queued jobs
+            bump_seq(s)
             reset_session(s)
             s.state = STATE_WAIT_AR
             tg_send_message(s.chat_id, msg_ask_ar())
@@ -568,7 +565,7 @@ async def webhook(req: Request):
                         name_ar=s.name_ar,
                         name_en=s.name_en,
                         requested_at=time.time(),
-                        seq=s.seq,  # bind job to current seq
+                        seq=s.seq,
                     )
                 )
                 return {"ok": True}
