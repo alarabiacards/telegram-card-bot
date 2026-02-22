@@ -267,7 +267,7 @@ def ar_kb_after_ready():
         ]
     }
 
-# --- AlHafez (Arabic only with new flow)
+# --- AlHafez (Arabic only with requested flow)
 def hz_msg_welcome():
     return (
         "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي جمعية الحافظ لتأهيل حفاظ القرآن الكريم\n\n"
@@ -561,7 +561,6 @@ async def handle_webhook(req: Request, bot_key: str):
                 tg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
             return {"ok": True}
 
-        # ---- WAIT_AR
         if s.state == STATE_WAIT_AR:
             ok, val = validate_ar(text)
             if not ok:
@@ -578,12 +577,10 @@ async def handle_webhook(req: Request, bot_key: str):
                 tg_send_message(bot_token, s.chat_id, ar_msg_ask_en(), ar_kb_wait_en())
                 return {"ok": True}
             else:
-                # ✅ show confirm-data buttons (confirm/edit)
                 s.state = STATE_CONFIRM
                 tg_send_message(bot_token, s.chat_id, hz_msg_confirm(s.name_ar), hz_kb_confirm_data())
                 return {"ok": True}
 
-        # ---- WAIT_EN (alarabia)
         if s.state == STATE_WAIT_EN:
             if cmd == "EDIT_AR":
                 s.state = STATE_WAIT_AR
@@ -598,9 +595,8 @@ async def handle_webhook(req: Request, bot_key: str):
             s.name_en = val
             s.state = STATE_CONFIRM
             tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
-            return {"ok": True
+            return {"ok": True}
 
-        # ---- CONFIRM
         if s.state == STATE_CONFIRM:
             if bot_key == "alarabia":
                 if cmd == "EDIT_AR":
@@ -632,7 +628,6 @@ async def handle_webhook(req: Request, bot_key: str):
                 return {"ok": True}
 
             else:
-                # alhafez: confirm data -> choose size screen
                 if cmd == "EDIT_AR":
                     s.state = STATE_WAIT_AR
                     tg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
@@ -646,7 +641,6 @@ async def handle_webhook(req: Request, bot_key: str):
                 tg_send_message(bot_token, s.chat_id, hz_msg_confirm(s.name_ar), hz_kb_confirm_data())
                 return {"ok": True}
 
-        # ---- CHOOSE_SIZE (alhafez)
         if s.state == STATE_CHOOSE_SIZE and bot_key == "alhafez":
             if cmd in ("GEN_SQUARE", "GEN_VERTICAL"):
                 s.state = STATE_CREATING
