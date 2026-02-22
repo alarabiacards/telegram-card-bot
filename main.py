@@ -19,94 +19,105 @@ from googleapiclient.discovery import build
 # Logging
 # ---------------------------
 logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("telegram-card-bot")
+log = logging.getLogger("telegram-multi-card-bot")
 
 # ---------------------------
-# Env
+# Google OAuth / SA (shared)
 # ---------------------------
-# ✅ CHANGED ONLY: env var names (STRICT, no fallback)
-BOT_TOKEN = os.getenv("BOT_TOKEN_ALARABIA", "").strip()
-TEMPLATE_SLIDES_ID = os.getenv("TEMPLATE_SLIDES_ID_ALARABIA_SQUARE", "").strip()
-OUTPUT_FOLDER_ID = os.getenv("OUTPUT_FOLDER_ID", "").strip()  # not used now, kept for compatibility
-
-# OAuth (recommended)
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
 GOOGLE_REFRESH_TOKEN = os.getenv("GOOGLE_REFRESH_TOKEN", "").strip()
-
-# fallback Service Account (optional)
 SERVICE_ACCOUNT_JSON = os.getenv("SERVICE_ACCOUNT_JSON", "").strip()
-
-PLACEHOLDER_AR = os.getenv("PLACEHOLDER_AR", "<<Name in Arabic>>")
-PLACEHOLDER_EN = os.getenv("PLACEHOLDER_EN", "<<Name in English>>")
 
 SCOPES = [
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/presentations",
 ]
 
+HTTP_TIMEOUT = 20
+TG_API = "https://api.telegram.org/bot{}/{}"
+
+# Placeholders inside Slides templates
+PLACEHOLDER_AR = os.getenv("PLACEHOLDER_AR", "<<Name in Arabic>>")
+PLACEHOLDER_EN = os.getenv("PLACEHOLDER_EN", "<<Name in English>>")
+
 # ---------------------------
-# App
+# Bots env
+# ---------------------------
+BOT_TOKEN_ALARABIA = os.getenv("BOT_TOKEN_ALARABIA", "").strip()
+TEMPLATE_SLIDES_ID_ALARABIA_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_ALARABIA_SQUARE", "").strip()
+
+BOT_TOKEN_ALHAFEZ = os.getenv("BOT_TOKEN_ALHAFEZ", "").strip()
+TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE", "").strip()
+TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL = os.getenv("TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL", "").strip()
+
+# ---------------------------
+# FastAPI
 # ---------------------------
 app = FastAPI()
 
 # ---------------------------
-# Telegram helpers
+# Telegram helpers (per-bot)
 # ---------------------------
-TG_API = "https://api.telegram.org/bot{}/{}"
-HTTP_TIMEOUT = 20
-
-def tg(method: str, data: Optional[dict] = None, files: Optional[dict] = None) -> requests.Response:
-    url = TG_API.format(BOT_TOKEN, method)
+def tg(bot_token: str, method: str, data: Optional[dict] = None, files: Optional[dict] = None) -> requests.Response:
+    url = TG_API.format(bot_token, method)
     r = requests.post(url, data=data, files=files, timeout=HTTP_TIMEOUT)
     if r.status_code != 200:
         log.warning("TG error %s %s: %s", method, r.status_code, r.text[:800])
     return r
 
-def tg_send_message(chat_id: str, text: str, reply_markup: Optional[dict] = None) -> Optional[int]:
+def tg_send_message(bot_token: str, chat_id: str, text: str, reply_markup: Optional[dict] = None) -> Optional[int]:
     payload = {"chat_id": chat_id, "text": text}
     if reply_markup is not None:
         payload["reply_markup"] = json.dumps(reply_markup)
-    r = tg("sendMessage", payload)
+    r = tg(bot_token, "sendMessage", payload)
     try:
         j = r.json()
         return int(j["result"]["message_id"])
     except Exception:
         return None
 
-def tg_edit_message(chat_id: str, message_id: int, text: str, reply_markup: Optional[dict] = None) -> bool:
+def tg_edit_message(bot_token: str, chat_id: str, message_id: int, text: str, reply_markup: Optional[dict] = None) -> bool:
     payload = {"chat_id": chat_id, "message_id": message_id, "text": text}
     if reply_markup is not None:
         payload["reply_markup"] = json.dumps(reply_markup)
-    r = tg("editMessageText", payload)
+    r = tg(bot_token, "editMessageText", payload)
     return r.status_code == 200
 
-def tg_answer_callback(callback_query_id: str) -> None:
+def tg_answer_callback(bot_token: str, callback_query_id: str) -> None:
     if callback_query_id:
-        tg("answerCallbackQuery", {"callback_query_id": callback_query_id})
+        tg(bot_token, "answerCallbackQuery", {"callback_query_id": callback_query_id})
 
-# ✅ supports reply_markup for photo
-def tg_send_photo(chat_id: str, png_bytes: bytes, caption: str, reply_markup: Optional[dict] = None) -> None:
+def tg_send_photo(bot_token: str, chat_id: str, png_bytes: bytes, caption: str, reply_markup: Optional[dict] = None) -> None:
     files = {"photo": ("card.png", png_bytes)}
     data = {"chat_id": chat_id, "caption": caption}
     if reply_markup is not None:
         data["reply_markup"] = json.dumps(reply_markup)
-    tg("sendPhoto", data=data, files=files)
+    tg(bot_token, "sendPhoto", data=data, files=files)
 
 # ---------------------------
-# Google clients (cached)
+# Google clients (cached, shared)
 # ---------------------------
 _drive = None
 _slides = None
 _creds = None
 
 def require_env():
-    # ✅ CHANGED ONLY: error strings to match new env names
-    if not BOT_TOKEN:
+    # AlArabia required
+    if not BOT_TOKEN_ALARABIA:
         raise RuntimeError("BOT_TOKEN_ALARABIA is missing")
-    if not TEMPLATE_SLIDES_ID:
+    if not TEMPLATE_SLIDES_ID_ALARABIA_SQUARE:
         raise RuntimeError("TEMPLATE_SLIDES_ID_ALARABIA_SQUARE is missing")
 
+    # AlHafez required
+    if not BOT_TOKEN_ALHAFEZ:
+        raise RuntimeError("BOT_TOKEN_ALHAFEZ is missing")
+    if not TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE:
+        raise RuntimeError("TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE is missing")
+    if not TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL:
+        raise RuntimeError("TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL is missing")
+
+    # Google auth
     if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN) and not SERVICE_ACCOUNT_JSON:
         raise RuntimeError("Provide OAuth vars (GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN) or SERVICE_ACCOUNT_JSON")
 
@@ -178,11 +189,12 @@ def validate_en(name: str) -> Tuple[bool, str]:
     return True, name
 
 # ---------------------------
-# Messages (Arabic + English)
+# Messages + Keyboards (per-bot)
 # ---------------------------
 DIV = "\n--------------------\n"
 
-def msg_welcome():
+# ---- AlArabia (Arabic + English) ----
+def ar_msg_welcome():
     ar = (
         "مرحباً بكم في بوت توليد بطاقات التهنئة الرقمية بشركة العربية\n\n"
         "يمكن لكل موظف إصدار البطاقة بسرعة وبشكل مستقل – مبادرة شخصية وحل رقمي – تطوير: عمرو إسماعيل"
@@ -194,87 +206,50 @@ def msg_welcome():
     )
     return ar + DIV + en
 
-def msg_need_start():
+def ar_msg_need_start():
     ar = "الرجاء إرسال /start للبدء من جديد."
     en = "Please send /start to start again."
     return ar + DIV + en
 
-def msg_ask_ar():
-    ar = "اكتب اسمك بالعربية:"
-    en = "Enter your name in Arabic:"
+def ar_msg_ask_ar():
+    return "اكتب اسمك بالعربية:" + DIV + "Enter your name in Arabic:"
+
+def ar_msg_ask_en():
+    return "اكتب اسمك بالإنجليزية:" + DIV + "Enter your name in English:"
+
+def ar_msg_invalid_ar(reason_ar: str):
+    return f"غير صحيح: {reason_ar}\n\nاكتب الاسم بالعربية فقط." + DIV + "Invalid Arabic name.\n\nPlease type Arabic letters only."
+
+def ar_msg_invalid_en(reason_ar: str):
+    return f"غير صحيح: {reason_ar}\n\nاكتب الاسم بالإنجليزية فقط." + DIV + "Invalid English name.\n\nPlease type English letters only."
+
+def ar_msg_confirm(name_ar: str, name_en: str):
+    ar = f"تأكيد البيانات:\n\nالاسم بالعربية: {name_ar}\nالاسم بالإنجليزية: {name_en}\n\n"
+    en = f"Confirm details:\n\nArabic: {name_ar}\nEnglish: {name_en}\n\n"
     return ar + DIV + en
 
-def msg_ask_en():
-    ar = "اكتب اسمك بالإنجليزية:"
-    en = "Enter your name in English:"
-    return ar + DIV + en
+def ar_msg_creating():
+    return "جاري توليد البطاقة..." + DIV + "Generating your card..."
 
-def msg_invalid_ar(reason_ar: str):
-    ar = f"غير صحيح: {reason_ar}\n\nاكتب الاسم بالعربية فقط."
-    en = "Invalid Arabic name.\n\nPlease type Arabic letters only."
-    return ar + DIV + en
+def ar_msg_ready():
+    return "تم إنشاء البطاقة." + DIV + "Your card is ready."
 
-def msg_invalid_en(reason_ar: str):
-    ar = f"غير صحيح: {reason_ar}\n\nاكتب الاسم بالإنجليزية فقط."
-    en = "Invalid English name.\n\nPlease type English letters only."
-    return ar + DIV + en
+def ar_msg_error(err: str):
+    return "خطأ أثناء إنشاء البطاقة:\n" + err + DIV + "Error while creating the card:\n" + err
 
-def msg_confirm(name_ar: str, name_en: str):
-    ar = (
-        "تأكيد البيانات:\n\n"
-        f"الاسم بالعربية: {name_ar}\n"
-        f"الاسم بالإنجليزية: {name_en}\n\n"
-    )
-    en = (
-        "Confirm details:\n\n"
-        f"Arabic: {name_ar}\n"
-        f"English: {name_en}\n\n"
-    )
-    return ar + DIV + en
+def ar_kb_start_card():
+    return {"inline_keyboard": [[{"text": "🎉 إصدار بطاقة تهنئة / Generate Card", "callback_data": "START_CARD"}]]}
 
-def msg_creating():
-    ar = "جاري توليد البطاقة..."
-    en = "Generating your card..."
-    return ar + DIV + en
+def ar_kb_start_again():
+    return {"inline_keyboard": [[{"text": "▶️ Start / ابدأ", "callback_data": "START"}]]}
 
-def msg_ready():
-    ar = "تم إنشاء البطاقة."
-    en = "Your card is ready."
-    return ar + DIV + en
+def ar_kb_wait_en():
+    return {"inline_keyboard": [[{"text": "إعادة كتابة الاسم العربي / Edit Arabic", "callback_data": "EDIT_AR"}]]}
 
-def msg_error(err: str):
-    ar = "خطأ أثناء إنشاء البطاقة:\n" + err
-    en = "Error while creating the card:\n" + err
-    return ar + DIV + en
-
-# ---------------------------
-# Keyboards
-# ---------------------------
-def kb_start_card():
+def ar_kb_confirm():
     return {
         "inline_keyboard": [
-            [{"text": "🎉 إصدار بطاقة تهنئة / Generate Card", "callback_data": "START_CARD"}]
-        ]
-    }
-
-def kb_start_again():
-    return {
-        "inline_keyboard": [
-            [{"text": "▶️ Start / ابدأ", "callback_data": "START"}]
-        ]
-    }
-
-def kb_wait_en():
-    return {
-        "inline_keyboard": [
-            [{"text": "إعادة كتابة الاسم العربي / Edit Arabic", "callback_data": "EDIT_AR"}],
-        ]
-    }
-
-def kb_confirm():
-    return {
-        "inline_keyboard": [
-            [{"text": "توليد البطاقة / Generate", "callback_data": "GEN"}],
+            [{"text": "توليد البطاقة / Generate", "callback_data": "GEN_SQUARE"}],
             [
                 {"text": "تعديل العربي / Edit Arabic", "callback_data": "EDIT_AR"},
                 {"text": "تعديل الإنجليزي / Edit English", "callback_data": "EDIT_EN"},
@@ -282,7 +257,7 @@ def kb_confirm():
         ]
     }
 
-def kb_after_ready():
+def ar_kb_after_ready():
     return {
         "inline_keyboard": [
             [{"text": "🔁 إصدار بطاقة أخرى / Generate Another Card", "callback_data": "START_CARD"}],
@@ -290,33 +265,91 @@ def kb_after_ready():
         ]
     }
 
+# ---- AlHafez (Arabic only) ----
+def hz_msg_welcome():
+    return (
+        "يسر جمعية الحافظ لتأهيل حفاظ القرآن الكريم أن تعلن عن إطلاق بوت إصدار بطاقات التهنئة الرقمية،\n"
+        "والذي يهدف إلى تمكين منسوبي الجمعية من إصدار بطاقاتهم إلكترونيًا بسهولة واستقلالية، دعمًا لمسيرة التحول الرقمي بالجمعية.\n\n"
+        "تطوير: عمرو بن عبدالعزيز العديني."
+    )
+
+def hz_msg_need_start():
+    return "الرجاء إرسال /start للبدء من جديد."
+
+def hz_msg_ask_ar():
+    return "اكتب اسمك بالعربية:"
+
+def hz_msg_invalid_ar(reason_ar: str):
+    return f"غير صحيح: {reason_ar}\n\nاكتب الاسم بالعربية فقط."
+
+def hz_msg_confirm(name_ar: str):
+    return f"تأكيد البيانات:\n\nالاسم: {name_ar}\n\nاختر نوع البطاقة:"
+
+def hz_msg_creating():
+    return "جاري توليد البطاقة..."
+
+def hz_msg_ready():
+    return "تم إنشاء البطاقة."
+
+def hz_msg_error(err: str):
+    return "خطأ أثناء إنشاء البطاقة:\n" + err
+
+def hz_kb_start_card():
+    return {"inline_keyboard": [[{"text": "🎉 إصدار بطاقة تهنئة", "callback_data": "START_CARD"}]]}
+
+def hz_kb_start_again():
+    return {"inline_keyboard": [[{"text": "▶️ ابدأ", "callback_data": "START"}]]}
+
+def hz_kb_confirm_choose_type():
+    # أزرار تحت بعض
+    return {
+        "inline_keyboard": [
+            [{"text": "✅ إصدار بطاقة (مربع)", "callback_data": "GEN_SQUARE"}],
+            [{"text": "📐 إصدار بطاقة (طولي)", "callback_data": "GEN_VERTICAL"}],
+            [{"text": "✏️ تعديل الاسم", "callback_data": "EDIT_AR"}],
+        ]
+    }
+
+def hz_kb_after_ready():
+    # الأزرار المطلوبة تحت بعض
+    return {
+        "inline_keyboard": [
+            [{"text": "🔁 إعادة الإصدار", "callback_data": "START_CARD"}],
+            [{"text": "📐 إصدار بطاقة بمقاس طولي", "callback_data": "START_CARD_VERTICAL"}],
+            [{"text": "🏠 البداية", "callback_data": "START"}],
+        ]
+    }
+
 # ---------------------------
-# Session
+# Session / State (per bot)
 # ---------------------------
 STATE_MENU = "MENU"
 STATE_WAIT_AR = "WAIT_AR"
-STATE_WAIT_EN = "WAIT_EN"
+STATE_WAIT_EN = "WAIT_EN"         # only for AlArabia
 STATE_CONFIRM = "CONFIRM"
 STATE_CREATING = "CREATING"
 
 @dataclass
 class Session:
     chat_id: str
+    bot_key: str
     state: str = STATE_MENU
     name_ar: str = ""
     name_en: str = ""
     last_update_id: int = 0
     last_fingerprint: str = ""
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    seq: int = 0  # ✅ invalidates queued jobs when restarting
+    seq: int = 0  # invalidates queued jobs when restarting
 
+# key = f"{bot_key}:{chat_id}"
 sessions: Dict[str, Session] = {}
 
-def get_session(chat_id: str) -> Session:
-    s = sessions.get(chat_id)
+def get_session(bot_key: str, chat_id: str) -> Session:
+    k = f"{bot_key}:{chat_id}"
+    s = sessions.get(k)
     if not s:
-        s = Session(chat_id=chat_id)
-        sessions[chat_id] = s
+        s = Session(chat_id=chat_id, bot_key=bot_key)
+        sessions[k] = s
     return s
 
 def reset_session(s: Session):
@@ -328,17 +361,20 @@ def bump_seq(s: Session):
     s.seq += 1
 
 # ---------------------------
-# Queue worker
+# Job queue (shared worker, supports both bots)
 # ---------------------------
 job_queue: asyncio.Queue = asyncio.Queue()
 
 @dataclass
 class Job:
+    bot_key: str
     chat_id: str
     name_ar: str
     name_en: str
+    template_id: str
     requested_at: float
     seq: int
+    after_ready_variant: str  # "ALARABIA" or "ALHAFEZ"
 
 async def worker_loop():
     require_env()
@@ -353,7 +389,8 @@ async def worker_loop():
             job_queue.task_done()
 
 async def process_job(job: Job):
-    s = get_session(job.chat_id)
+    bot = BOTS[job.bot_key]
+    s = get_session(job.bot_key, job.chat_id)
 
     async with s.lock:
         if job.seq != s.seq:
@@ -361,22 +398,53 @@ async def process_job(job: Job):
             return
 
     try:
-        png_bytes = generate_card_png(job.name_ar, job.name_en)
+        png_bytes = generate_card_png(
+            template_id=job.template_id,
+            name_ar=job.name_ar,
+            name_en=job.name_en,
+            lang_mode=bot["lang_mode"],
+        )
 
         async with s.lock:
             if job.seq != s.seq:
                 log.info("Skip sending stale result for chat %s (job.seq=%s, current.seq=%s)", job.chat_id, job.seq, s.seq)
                 return
 
-        tg_send_photo(job.chat_id, png_bytes, msg_ready(), kb_after_ready())
+        # Send photo + buttons
+        if job.after_ready_variant == "ALARABIA":
+            tg_send_photo(bot["token"], job.chat_id, png_bytes, ar_msg_ready(), ar_kb_after_ready())
+        else:
+            tg_send_photo(bot["token"], job.chat_id, png_bytes, hz_msg_ready(), hz_kb_after_ready())
 
         async with s.lock:
             reset_session(s)
 
     except Exception as e:
-        tg_send_message(job.chat_id, msg_error(str(e)))
+        # error message
+        if job.after_ready_variant == "ALARABIA":
+            tg_send_message(bot["token"], job.chat_id, ar_msg_error(str(e)))
+        else:
+            tg_send_message(bot["token"], job.chat_id, hz_msg_error(str(e)))
         async with s.lock:
             reset_session(s)
+
+# ---------------------------
+# Bot registry (dicts to avoid dataclass import issues in some runtimes)
+# ---------------------------
+BOTS = {
+    "alarabia": {
+        "token": BOT_TOKEN_ALARABIA,
+        "template_square": TEMPLATE_SLIDES_ID_ALARABIA_SQUARE,
+        "template_vertical": "",  # not used here
+        "lang_mode": "AR_EN",
+    },
+    "alhafez": {
+        "token": BOT_TOKEN_ALHAFEZ,
+        "template_square": TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE,
+        "template_vertical": TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL,
+        "lang_mode": "AR_ONLY",
+    },
+}
 
 # ---------------------------
 # Google: generate PNG (no Drive upload)
@@ -391,26 +459,34 @@ def export_png(pres_id: str, slide_object_id: str, creds) -> bytes:
         raise RuntimeError(f"Export PNG failed: HTTP {r.status_code} - {r.text[:300]}")
     return r.content
 
-def generate_card_png(name_ar: str, name_en: str) -> bytes:
+def generate_card_png(template_id: str, name_ar: str, name_en: str, lang_mode: str) -> bytes:
     drive, slides, creds = build_clients()
     pres_id = None
 
     try:
         copied = drive.files().copy(
-            fileId=TEMPLATE_SLIDES_ID,
+            fileId=template_id,
             body={"name": f"tg_card_{int(time.time())}"},
             supportsAllDrives=True,
         ).execute()
         pres_id = copied["id"]
 
+        requests_list = []
+
+        # Always replace Arabic placeholder
+        requests_list.append(
+            {"replaceAllText": {"containsText": {"text": PLACEHOLDER_AR}, "replaceText": name_ar}}
+        )
+
+        # Replace English placeholder only for AR_EN
+        if lang_mode == "AR_EN":
+            requests_list.append(
+                {"replaceAllText": {"containsText": {"text": PLACEHOLDER_EN}, "replaceText": name_en}}
+            )
+
         slides.presentations().batchUpdate(
             presentationId=pres_id,
-            body={
-                "requests": [
-                    {"replaceAllText": {"containsText": {"text": PLACEHOLDER_AR}, "replaceText": name_ar}},
-                    {"replaceAllText": {"containsText": {"text": PLACEHOLDER_EN}, "replaceText": name_en}},
-                ]
-            }
+            body={"requests": requests_list}
         ).execute()
 
         pres = slides.presentations().get(presentationId=pres_id).execute()
@@ -454,29 +530,21 @@ def normalize_cmd(text: str) -> str:
     return ""
 
 # ---------------------------
-# Routes
+# Core handler (per bot)
 # ---------------------------
-@app.on_event("startup")
-async def startup():
-    require_env()
-    asyncio.create_task(worker_loop())
-    log.info("App started")
+async def handle_webhook(req: Request, bot_key: str):
+    bot = BOTS[bot_key]
+    bot_token = bot["token"]
 
-@app.get("/")
-def home():
-    return {"status": "ok"}
-
-@app.post("/webhook")
-async def webhook(req: Request):
     data = await req.json()
     update_id, chat_id, text_raw, msg_id, cq_id = extract_update(data)
 
     if not chat_id:
         return {"ok": True}
 
-    s = get_session(chat_id)
+    s = get_session(bot_key, chat_id)
 
-    # ✅ Dedup FIRST (prevents answering the same callback twice)
+    # Dedup
     fp = f"{update_id}|{msg_id}|{cq_id or ''}|{text_raw}"
 
     async with s.lock:
@@ -489,96 +557,182 @@ async def webhook(req: Request):
             s.last_update_id = update_id
         s.last_fingerprint = fp
 
-    # ✅ Now it's safe to answer callback (only once)
+    # Answer callback once
     if cq_id:
-        tg_answer_callback(cq_id)
+        tg_answer_callback(bot_token, cq_id)
 
     text = clean_text(text_raw)
     cmd = normalize_cmd(text)
 
-    # callbacks
-    if text in ("EDIT_AR", "EDIT_EN", "GEN", "START_CARD", "START"):
+    # callbacks map
+    if text in (
+        "EDIT_AR",
+        "EDIT_EN",
+        "GEN_SQUARE",
+        "GEN_VERTICAL",
+        "START_CARD",
+        "START_CARD_VERTICAL",
+        "START",
+    ):
         cmd = text
 
     async with s.lock:
-        # ✅ START: show welcome/menu + invalidate any queued jobs
+        # START
         if cmd == "START":
             bump_seq(s)
             reset_session(s)
-            tg_send_message(s.chat_id, msg_welcome(), kb_start_card())
+            if bot_key == "alarabia":
+                tg_send_message(bot_token, s.chat_id, ar_msg_welcome(), ar_kb_start_card())
+            else:
+                tg_send_message(bot_token, s.chat_id, hz_msg_welcome(), hz_kb_start_card())
             s.state = STATE_MENU
             return {"ok": True}
 
-        # ✅ START_CARD: start collecting names + invalidate any queued jobs
-        if cmd == "START_CARD":
+        # START_CARD (square) / START_CARD_VERTICAL (alhafez only)
+        if cmd in ("START_CARD", "START_CARD_VERTICAL"):
             bump_seq(s)
             reset_session(s)
             s.state = STATE_WAIT_AR
-            tg_send_message(s.chat_id, msg_ask_ar())
+            if bot_key == "alarabia":
+                tg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
+            else:
+                # store desired type in state by putting marker in name_en
+                # (simple, no extra fields)
+                s.name_en = "VERTICAL" if cmd == "START_CARD_VERTICAL" else "SQUARE"
+                tg_send_message(bot_token, s.chat_id, hz_msg_ask_ar())
             return {"ok": True}
 
         # WAIT_AR
         if s.state == STATE_WAIT_AR:
             ok, val = validate_ar(text)
             if not ok:
-                tg_send_message(s.chat_id, msg_invalid_ar(val))
+                if bot_key == "alarabia":
+                    tg_send_message(bot_token, s.chat_id, ar_msg_invalid_ar(val))
+                else:
+                    tg_send_message(bot_token, s.chat_id, hz_msg_invalid_ar(val))
                 return {"ok": True}
 
             s.name_ar = val
-            s.state = STATE_WAIT_EN
-            tg_send_message(s.chat_id, msg_ask_en(), kb_wait_en())
-            return {"ok": True}
 
-        # WAIT_EN
+            if bot_key == "alarabia":
+                # Next: wait EN
+                s.state = STATE_WAIT_EN
+                tg_send_message(bot_token, s.chat_id, ar_msg_ask_en(), ar_kb_wait_en())
+                return {"ok": True}
+            else:
+                # Alhafez: confirm + choose type
+                s.state = STATE_CONFIRM
+                tg_send_message(bot_token, s.chat_id, hz_msg_confirm(s.name_ar), hz_kb_confirm_choose_type())
+                return {"ok": True}
+
+        # WAIT_EN (AlArabia only)
         if s.state == STATE_WAIT_EN:
             if cmd == "EDIT_AR":
                 s.state = STATE_WAIT_AR
-                tg_send_message(s.chat_id, msg_ask_ar())
+                tg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
                 return {"ok": True}
 
             ok, val = validate_en(text)
             if not ok:
-                tg_send_message(s.chat_id, msg_invalid_en(val), kb_wait_en())
+                tg_send_message(bot_token, s.chat_id, ar_msg_invalid_en(val), ar_kb_wait_en())
                 return {"ok": True}
 
             s.name_en = val
             s.state = STATE_CONFIRM
-            tg_send_message(s.chat_id, msg_confirm(s.name_ar, s.name_en), kb_confirm())
+            tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
             return {"ok": True}
 
         # CONFIRM
         if s.state == STATE_CONFIRM:
-            if cmd == "EDIT_AR":
-                s.state = STATE_WAIT_AR
-                tg_send_message(s.chat_id, msg_ask_ar())
-                return {"ok": True}
-            if cmd == "EDIT_EN":
-                s.state = STATE_WAIT_EN
-                tg_send_message(s.chat_id, msg_ask_en(), kb_wait_en())
-                return {"ok": True}
+            if bot_key == "alarabia":
+                if cmd == "EDIT_AR":
+                    s.state = STATE_WAIT_AR
+                    tg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
+                    return {"ok": True}
+                if cmd == "EDIT_EN":
+                    s.state = STATE_WAIT_EN
+                    tg_send_message(bot_token, s.chat_id, ar_msg_ask_en(), ar_kb_wait_en())
+                    return {"ok": True}
 
-            if cmd == "GEN":
-                s.state = STATE_CREATING
-                tg_send_message(s.chat_id, msg_creating())
+                if cmd == "GEN_SQUARE":
+                    s.state = STATE_CREATING
+                    tg_send_message(bot_token, s.chat_id, ar_msg_creating())
 
-                await job_queue.put(
-                    Job(
-                        chat_id=s.chat_id,
-                        name_ar=s.name_ar,
-                        name_en=s.name_en,
-                        requested_at=time.time(),
-                        seq=s.seq,
+                    await job_queue.put(
+                        Job(
+                            bot_key=bot_key,
+                            chat_id=s.chat_id,
+                            name_ar=s.name_ar,
+                            name_en=s.name_en,
+                            template_id=bot["template_square"],
+                            requested_at=time.time(),
+                            seq=s.seq,
+                            after_ready_variant="ALARABIA",
+                        )
                     )
-                )
+                    return {"ok": True}
+
+                tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
                 return {"ok": True}
 
-            tg_send_message(s.chat_id, msg_confirm(s.name_ar, s.name_en), kb_confirm())
-            return {"ok": True}
+            else:
+                # Alhafez confirm: choose square/vertical or edit
+                if cmd == "EDIT_AR":
+                    s.state = STATE_WAIT_AR
+                    tg_send_message(bot_token, s.chat_id, hz_msg_ask_ar())
+                    return {"ok": True}
 
-        # CREATING: ignore other texts (START/START_CARD handled above)
+                if cmd in ("GEN_SQUARE", "GEN_VERTICAL"):
+                    s.state = STATE_CREATING
+                    tg_send_message(bot_token, s.chat_id, hz_msg_creating())
+
+                    template_id = bot["template_square"] if cmd == "GEN_SQUARE" else bot["template_vertical"]
+
+                    await job_queue.put(
+                        Job(
+                            bot_key=bot_key,
+                            chat_id=s.chat_id,
+                            name_ar=s.name_ar,
+                            name_en="",  # not used
+                            template_id=template_id,
+                            requested_at=time.time(),
+                            seq=s.seq,
+                            after_ready_variant="ALHAFEZ",
+                        )
+                    )
+                    return {"ok": True}
+
+                tg_send_message(bot_token, s.chat_id, hz_msg_confirm(s.name_ar), hz_kb_confirm_choose_type())
+                return {"ok": True}
+
+        # CREATING: ignore other texts
         if s.state == STATE_CREATING:
             return {"ok": True}
 
         # Default
-        tg_send_message(s.chat_id, msg_need_start(), kb_start_again())
+        if bot_key == "alarabia":
+            tg_send_message(bot_token, s.chat_id, ar_msg_need_start(), ar_kb_start_again())
+        else:
+            tg_send_message(bot_token, s.chat_id, hz_msg_need_start(), hz_kb_start_again())
         return {"ok": True}
+
+# ---------------------------
+# Routes
+# ---------------------------
+@app.on_event("startup")
+async def startup():
+    require_env()
+    asyncio.create_task(worker_loop())
+    log.info("App started")
+
+@app.get("/")
+def home():
+    return {"status": "ok"}
+
+@app.post("/webhook/alarabia")
+async def webhook_alarabia(req: Request):
+    return await handle_webhook(req, "alarabia")
+
+@app.post("/webhook/alhafez")
+async def webhook_alhafez(req: Request):
+    return await handle_webhook(req, "alhafez")
