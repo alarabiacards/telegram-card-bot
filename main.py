@@ -1,4 +1,3 @@
-```python
 import os
 import json
 import time
@@ -216,7 +215,7 @@ def validate_en(name: str) -> Tuple[bool, str]:
 # ---------------------------
 DIV = "\n--------------------\n"
 
-# --- AlArabia (unchanged)
+# --- AlArabia (AR/EN)
 def ar_msg_welcome():
     ar = (
         "مرحباً بكم في بوت توليد بطاقات التهنئة الرقمية بشركة العربية\n\n"
@@ -286,11 +285,17 @@ def ar_kb_after_ready():
         ]
     }
 
-# --- AlHafez (Arabic only)
+# --- Arabic-only (AlHafez / AlFalah)
 def hz_msg_welcome():
     return (
         "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي جمعية الحافظ لتأهيل حفاظ القرآن الكريم\n\n"
         "تطوير: عمرو بن عبدالعزيز العديني"
+    )
+
+def fl_msg_welcome():
+    return (
+        "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي مدارس الفلاح\n\n"
+        "تطوير: عمرو بن عبدالعزيز اسماعيل"
     )
 
 def hz_msg_need_start():
@@ -341,13 +346,6 @@ def hz_kb_choose_size():
 
 def hz_kb_after_ready():
     return {"inline_keyboard": [[{"text": "البداية", "callback_data": "START"}]]}
-
-# --- AlFalah (same as AlHafez; only welcome differs)
-def fl_msg_welcome():
-    return (
-        "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي مدارس الفلاح\n\n"
-        "تطوير: عمرو بن عبدالعزيز اسماعيل"
-    )
 
 # ---------------------------
 # Session
@@ -683,7 +681,7 @@ async def handle_webhook(req: Request, bot_key: str):
                         seq=s.seq,
                     )
                 )
-                return {"ok": True
+                return {"ok": True}
 
             tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
             return {"ok": True}
@@ -749,4 +747,3 @@ async def webhook_alhafez(req: Request):
 @app.post("/webhook/alfalah")
 async def webhook_alfalah(req: Request):
     return await handle_webhook(req, "alfalah")
-```
