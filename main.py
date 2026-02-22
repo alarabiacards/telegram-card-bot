@@ -50,7 +50,7 @@ BOT_TOKEN_ALHAFEZ = os.getenv("BOT_TOKEN_ALHAFEZ", "").strip()
 TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE", "").strip()
 TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL = os.getenv("TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL", "").strip()
 
-# AlFalah (new)
+# AlFalah
 BOT_TOKEN_ALFALAH = os.getenv("BOT_TOKEN_ALFALAH", "").strip()
 TEMPLATE_SLIDES_ID_ALFALAH_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_ALFALAH_SQUARE", "").strip()
 TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL = os.getenv("TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL", "").strip()
@@ -310,8 +310,9 @@ def hz_msg_invalid_ar(reason_ar: str):
 def hz_msg_review_name(name_ar: str):
     return f"مراجعة الاسم:\n\nالاسم: {name_ar}"
 
+# CHANGED TEXT (for AlHafez & AlFalah)
 def hz_msg_choose_size():
-    return "يرجى اختيار مقاس البطاقة"
+    return "اختر شكل البطاقة"
 
 def hz_msg_creating():
     return "جاري إصدار البطاقة..."
@@ -336,11 +337,12 @@ def hz_kb_review_name():
         ]
     }
 
+# CHANGED BUTTONS (for AlHafez & AlFalah)
 def hz_kb_choose_size():
     return {
         "inline_keyboard": [
-            [{"text": "إصدار بطاقة (مقاس مربع)", "callback_data": "GEN_SQUARE"}],
-            [{"text": "إصدار بطاقة (مقاس طولي)", "callback_data": "GEN_VERTICAL"}],
+            [{"text": "مربع", "callback_data": "GEN_SQUARE"}],
+            [{"text": "طولي", "callback_data": "GEN_VERTICAL"}],
         ]
     }
 
