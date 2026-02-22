@@ -200,7 +200,7 @@ def validate_en(name: str) -> Tuple[bool, str]:
 # ---------------------------
 DIV = "\n--------------------\n"
 
-# --- AlArabia (AR+EN كما هو)
+# --- AlArabia (unchanged)
 def ar_msg_welcome():
     ar = (
         "مرحباً بكم في بوت توليد بطاقات التهنئة الرقمية بشركة العربية\n\n"
@@ -243,10 +243,10 @@ def ar_msg_error(err: str):
     return "خطأ أثناء إنشاء البطاقة:\n" + err + DIV + "Error while creating the card:\n" + err
 
 def ar_kb_start_card():
-    return {"inline_keyboard": [[{"text": "🎉 إصدار بطاقة تهنئة / Generate Card", "callback_data": "START_CARD"}]]}
+    return {"inline_keyboard": [[{"text": "إصدار بطاقة تهنئة / Generate Card", "callback_data": "START_CARD"}]]}
 
 def ar_kb_start_again():
-    return {"inline_keyboard": [[{"text": "▶️ Start / ابدأ", "callback_data": "START"}]]}
+    return {"inline_keyboard": [[{"text": "Start / ابدأ", "callback_data": "START"}]]}
 
 def ar_kb_wait_en():
     return {"inline_keyboard": [[{"text": "إعادة كتابة الاسم العربي / Edit Arabic", "callback_data": "EDIT_AR"}]]}
@@ -265,16 +265,15 @@ def ar_kb_confirm():
 def ar_kb_after_ready():
     return {
         "inline_keyboard": [
-            [{"text": "🔁 إصدار بطاقة أخرى / Generate Another Card", "callback_data": "START_CARD"}],
-            [{"text": "🏠 البداية / Start", "callback_data": "START"}],
+            [{"text": "إصدار بطاقة أخرى / Generate Another Card", "callback_data": "START_CARD"}],
+            [{"text": "البداية / Start", "callback_data": "START"}],
         ]
     }
 
-# --- AlHafez (Arabic only)
+# --- AlHafez (Arabic only + official buttons, no emojis)
 def hz_msg_welcome():
     return (
-        "يسر جمعية الحافظ لتأهيل حفاظ القرآن الكريم أن تعلن عن إطلاق بوت إصدار بطاقات التهنئة الرقمية،\n"
-        "والذي يهدف إلى تمكين منسوبي الجمعية من إصدار بطاقاتهم إلكترونيًا بسهولة واستقلالية، دعمًا لمسيرة التحول الرقمي بالجمعية.\n\n"
+        "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي جمعية الحافظ لتأهيل حفاظ القرآن الكريم\n"
         "تطوير: عمرو بن عبدالعزيز العديني."
     )
 
@@ -294,34 +293,34 @@ def hz_msg_creating():
     return "جاري توليد البطاقة..."
 
 def hz_msg_ready():
-    return "تم إنشاء البطاقة."
+    return "تم إصدار البطاقة."
 
 def hz_msg_error(err: str):
-    return "خطأ أثناء إنشاء البطاقة:\n" + err
+    return "خطأ أثناء إصدار البطاقة:\n" + err
 
 def hz_kb_start_card():
-    return {"inline_keyboard": [[{"text": "🎉 إصدار بطاقة تهنئة", "callback_data": "START_CARD"}]]}
+    return {"inline_keyboard": [[{"text": "إصدار بطاقة تهنئة", "callback_data": "START_CARD"}]]}
 
 def hz_kb_start_again():
-    return {"inline_keyboard": [[{"text": "▶️ ابدأ", "callback_data": "START"}]]}
+    return {"inline_keyboard": [[{"text": "ابدأ", "callback_data": "START"}]]}
 
 def hz_kb_choose_type():
-    # أزرار تحت بعض
+    # ✅ No emojis + wording change inside parentheses
     return {
         "inline_keyboard": [
-            [{"text": "✅ إصدار بطاقة (مربع)", "callback_data": "GEN_SQUARE"}],
-            [{"text": "📐 إصدار بطاقة (طولي)", "callback_data": "GEN_VERTICAL"}],
-            [{"text": "✏️ تعديل الاسم", "callback_data": "EDIT_AR"}],
+            [{"text": "إصدار بطاقة (مقاس مربع)", "callback_data": "GEN_SQUARE"}],
+            [{"text": "إصدار بطاقة (مقاس طولي)", "callback_data": "GEN_VERTICAL"}],
+            [{"text": "تعديل الاسم", "callback_data": "EDIT_AR"}],
         ]
     }
 
 def hz_kb_after_ready():
-    # الأزرار المطلوبة تحت بعض
+    # ✅ Remove "generate vertical" button after ready (per request)
+    # ✅ No emojis + buttons under each other
     return {
         "inline_keyboard": [
-            [{"text": "🔁 إعادة الإصدار", "callback_data": "START_CARD"}],
-            [{"text": "📐 إصدار بطاقة بمقاس طولي", "callback_data": "START_CARD_VERTICAL"}],
-            [{"text": "🏠 البداية", "callback_data": "START"}],
+            [{"text": "إعادة الإصدار", "callback_data": "START_CARD"}],
+            [{"text": "البداية", "callback_data": "START"}],
         ]
     }
 
@@ -345,8 +344,6 @@ class Session:
     last_fingerprint: str = ""
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     seq: int = 0
-    # only for alhafez quick-start vertical button
-    preferred_kind: str = "SQUARE"  # "SQUARE" or "VERTICAL"
 
 sessions: Dict[str, Session] = {}
 
@@ -365,7 +362,6 @@ def reset_session(s: Session):
     s.state = STATE_MENU
     s.name_ar = ""
     s.name_en = ""
-    s.preferred_kind = "SQUARE"
 
 def bump_seq(s: Session):
     s.seq += 1
@@ -543,7 +539,6 @@ async def handle_webhook(req: Request, bot_key: str):
     text = clean_text(text_raw)
     cmd = normalize_cmd(text)
 
-    # callbacks
     if text in (
         "EDIT_AR",
         "EDIT_EN",
@@ -551,13 +546,11 @@ async def handle_webhook(req: Request, bot_key: str):
         "GEN_SQUARE",
         "GEN_VERTICAL",
         "START_CARD",
-        "START_CARD_VERTICAL",
         "START",
     ):
         cmd = text
 
     async with s.lock:
-        # START
         if cmd == "START":
             bump_seq(s)
             reset_session(s)
@@ -568,19 +561,16 @@ async def handle_webhook(req: Request, bot_key: str):
             s.state = STATE_MENU
             return {"ok": True}
 
-        # START_CARD / START_CARD_VERTICAL
-        if cmd in ("START_CARD", "START_CARD_VERTICAL"):
+        if cmd == "START_CARD":
             bump_seq(s)
             reset_session(s)
             s.state = STATE_WAIT_AR
             if bot_key == "alarabia":
                 tg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
             else:
-                s.preferred_kind = "VERTICAL" if cmd == "START_CARD_VERTICAL" else "SQUARE"
                 tg_send_message(bot_token, s.chat_id, hz_msg_ask_ar())
             return {"ok": True}
 
-        # WAIT_AR
         if s.state == STATE_WAIT_AR:
             ok, val = validate_ar(text)
             if not ok:
@@ -598,11 +588,9 @@ async def handle_webhook(req: Request, bot_key: str):
                 return {"ok": True}
             else:
                 s.state = STATE_CONFIRM
-                # لو جاية من زر "طولي" نخليه يختار النوع هنا برضه (لكن default = preferred_kind)
                 tg_send_message(bot_token, s.chat_id, hz_msg_confirm(s.name_ar), hz_kb_choose_type())
                 return {"ok": True}
 
-        # WAIT_EN (alarabia only)
         if s.state == STATE_WAIT_EN:
             if cmd == "EDIT_AR":
                 s.state = STATE_WAIT_AR
@@ -619,7 +607,6 @@ async def handle_webhook(req: Request, bot_key: str):
             tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
             return {"ok": True}
 
-        # CONFIRM
         if s.state == STATE_CONFIRM:
             if bot_key == "alarabia":
                 if cmd == "EDIT_AR":
@@ -631,7 +618,6 @@ async def handle_webhook(req: Request, bot_key: str):
                     tg_send_message(bot_token, s.chat_id, ar_msg_ask_en(), ar_kb_wait_en())
                     return {"ok": True}
 
-                # GEN (keep compatibility)
                 if cmd == "GEN":
                     s.state = STATE_CREATING
                     tg_send_message(bot_token, s.chat_id, ar_msg_creating())
@@ -653,13 +639,11 @@ async def handle_webhook(req: Request, bot_key: str):
                 return {"ok": True}
 
             else:
-                # AlHafez confirm
                 if cmd == "EDIT_AR":
                     s.state = STATE_WAIT_AR
                     tg_send_message(bot_token, s.chat_id, hz_msg_ask_ar())
                     return {"ok": True}
 
-                # If user presses generate square/vertical
                 if cmd in ("GEN_SQUARE", "GEN_VERTICAL"):
                     s.state = STATE_CREATING
                     tg_send_message(bot_token, s.chat_id, hz_msg_creating())
@@ -679,15 +663,12 @@ async def handle_webhook(req: Request, bot_key: str):
                     )
                     return {"ok": True}
 
-                # fallback: show chooser
                 tg_send_message(bot_token, s.chat_id, hz_msg_confirm(s.name_ar), hz_kb_choose_type())
                 return {"ok": True}
 
-        # CREATING
         if s.state == STATE_CREATING:
             return {"ok": True}
 
-        # Default
         if bot_key == "alarabia":
             tg_send_message(bot_token, s.chat_id, ar_msg_need_start(), ar_kb_start_again())
         else:
