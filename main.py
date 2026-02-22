@@ -1,3 +1,4 @@
+```python
 import os
 import json
 import time
@@ -50,6 +51,11 @@ BOT_TOKEN_ALHAFEZ = os.getenv("BOT_TOKEN_ALHAFEZ", "").strip()
 TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE", "").strip()
 TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL = os.getenv("TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL", "").strip()
 
+# NEW: AlFalah
+BOT_TOKEN_ALFALAH = os.getenv("BOT_TOKEN_ALFALAH", "").strip()
+TEMPLATE_SLIDES_ID_ALFALAH_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_ALFALAH_SQUARE", "").strip()
+TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL = os.getenv("TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL", "").strip()
+
 BOTS = {
     "alarabia": {
         "token": BOT_TOKEN_ALARABIA,
@@ -61,6 +67,12 @@ BOTS = {
         "token": BOT_TOKEN_ALHAFEZ,
         "template_square": TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE,
         "template_vertical": TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL,
+        "lang_mode": "AR_ONLY",
+    },
+    "alfalah": {
+        "token": BOT_TOKEN_ALFALAH,
+        "template_square": TEMPLATE_SLIDES_ID_ALFALAH_SQUARE,
+        "template_vertical": TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL,
         "lang_mode": "AR_ONLY",
     },
 }
@@ -121,6 +133,14 @@ def require_env():
         raise RuntimeError("TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE is missing")
     if not TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL:
         raise RuntimeError("TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL is missing")
+
+    # NEW: AlFalah env checks
+    if not BOT_TOKEN_ALFALAH:
+        raise RuntimeError("BOT_TOKEN_ALFALAH is missing")
+    if not TEMPLATE_SLIDES_ID_ALFALAH_SQUARE:
+        raise RuntimeError("TEMPLATE_SLIDES_ID_ALFALAH_SQUARE is missing")
+    if not TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL:
+        raise RuntimeError("TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL is missing")
 
     if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN) and not SERVICE_ACCOUNT_JSON:
         raise RuntimeError("Provide OAuth vars (GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN) or SERVICE_ACCOUNT_JSON")
@@ -267,11 +287,18 @@ def ar_kb_after_ready():
         ]
     }
 
-# --- AlHafez (Arabic only with requested wording)
+# --- Arabic-only flow (AlHafez / AlFalah share same flow)
 def hz_msg_welcome():
     return (
         "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي جمعية الحافظ لتأهيل حفاظ القرآن الكريم\n\n"
         "تطوير: عمرو بن عبدالعزيز العديني"
+    )
+
+# NEW: AlFalah welcome (only difference)
+def fl_msg_welcome():
+    return (
+        "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي مدارس الفلاح\n\n"
+        "تطوير: عمرو بن عبدالعزيز اسماعيل"
     )
 
 def hz_msg_need_start():
@@ -513,6 +540,7 @@ def normalize_cmd(text: str) -> str:
 async def handle_webhook(req: Request, bot_key: str):
     bot = BOTS[bot_key]
     bot_token = bot["token"]
+    is_ar_only = (bot.get("lang_mode") == "AR_ONLY")
 
     data = await req.json()
     update_id, chat_id, text_raw, msg_id, cq_id = extract_update(data)
@@ -554,10 +582,16 @@ async def handle_webhook(req: Request, bot_key: str):
         if cmd == "START":
             bump_seq(s)
             reset_session(s)
+
             if bot_key == "alarabia":
                 tg_send_message(bot_token, s.chat_id, ar_msg_welcome(), ar_kb_start_card())
             else:
-                tg_send_message(bot_token, s.chat_id, hz_msg_welcome(), hz_kb_start_card())
+                # Arabic-only welcome differs for alfalah فقط
+                if bot_key == "alfalah":
+                    tg_send_message(bot_token, s.chat_id, fl_msg_welcome(), hz_kb_start_card())
+                else:
+                    tg_send_message(bot_token, s.chat_id, hz_msg_welcome(), hz_kb_start_card())
+
             s.state = STATE_MENU
             return {"ok": True}
 
@@ -565,10 +599,12 @@ async def handle_webhook(req: Request, bot_key: str):
             bump_seq(s)
             reset_session(s)
             s.state = STATE_WAIT_AR
+
             if bot_key == "alarabia":
                 tg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
             else:
                 tg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
+
             return {"ok": True}
 
         # ---- WAIT_AR
@@ -583,16 +619,17 @@ async def handle_webhook(req: Request, bot_key: str):
 
             s.name_ar = val
 
-            if bot_key == "alarabia":
+            if not is_ar_only:  # alarabia (AR_EN)
                 s.state = STATE_WAIT_EN
                 tg_send_message(bot_token, s.chat_id, ar_msg_ask_en(), ar_kb_wait_en())
                 return {"ok": True}
-            else:
-                s.state = STATE_REVIEW_NAME
-                tg_send_message(bot_token, s.chat_id, hz_msg_review_name(s.name_ar), hz_kb_review_name())
-                return {"ok": True}
 
-        # ---- WAIT_EN (alarabia)
+            # Arabic-only (alhafez / alfalah)
+            s.state = STATE_REVIEW_NAME
+            tg_send_message(bot_token, s.chat_id, hz_msg_review_name(s.name_ar), hz_kb_review_name())
+            return {"ok": True}
+
+        # ---- WAIT_EN (AR_EN only)
         if s.state == STATE_WAIT_EN:
             if cmd == "EDIT_AR":
                 s.state = STATE_WAIT_AR
@@ -609,8 +646,8 @@ async def handle_webhook(req: Request, bot_key: str):
             tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
             return {"ok": True}
 
-        # ---- REVIEW_NAME (alhafez)
-        if s.state == STATE_REVIEW_NAME and bot_key == "alhafez":
+        # ---- REVIEW_NAME (Arabic-only)
+        if s.state == STATE_REVIEW_NAME and is_ar_only:
             if cmd == "EDIT_AR":
                 s.state = STATE_WAIT_AR
                 tg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
@@ -624,8 +661,8 @@ async def handle_webhook(req: Request, bot_key: str):
             tg_send_message(bot_token, s.chat_id, hz_msg_review_name(s.name_ar), hz_kb_review_name())
             return {"ok": True}
 
-        # ---- CONFIRM (alarabia)
-        if s.state == STATE_CONFIRM and bot_key == "alarabia":
+        # ---- CONFIRM (AR_EN only)
+        if s.state == STATE_CONFIRM and (not is_ar_only):
             if cmd == "EDIT_AR":
                 s.state = STATE_WAIT_AR
                 tg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
@@ -654,8 +691,8 @@ async def handle_webhook(req: Request, bot_key: str):
             tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
             return {"ok": True}
 
-        # ---- CHOOSE_SIZE (alhafez)
-        if s.state == STATE_CHOOSE_SIZE and bot_key == "alhafez":
+        # ---- CHOOSE_SIZE (Arabic-only)
+        if s.state == STATE_CHOOSE_SIZE and is_ar_only:
             if cmd in ("GEN_SQUARE", "GEN_VERTICAL"):
                 s.state = STATE_CREATING
                 tg_send_message(bot_token, s.chat_id, hz_msg_creating())
@@ -711,3 +748,9 @@ async def webhook_alarabia(req: Request):
 @app.post("/webhook/alhafez")
 async def webhook_alhafez(req: Request):
     return await handle_webhook(req, "alhafez")
+
+# NEW: AlFalah webhook
+@app.post("/webhook/alfalah")
+async def webhook_alfalah(req: Request):
+    return await handle_webhook(req, "alfalah")
+```
