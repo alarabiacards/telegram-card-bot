@@ -267,7 +267,7 @@ def ar_kb_after_ready():
         ]
     }
 
-# --- AlHafez (Arabic only with requested flow)
+# --- AlHafez (Arabic only with requested wording)
 def hz_msg_welcome():
     return (
         "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي جمعية الحافظ لتأهيل حفاظ القرآن الكريم\n\n"
@@ -283,8 +283,8 @@ def hz_msg_ask_name():
 def hz_msg_invalid_ar(reason_ar: str):
     return f"غير صحيح: {reason_ar}\n\nاكتب الاسم بالعربية فقط."
 
-def hz_msg_confirm(name_ar: str):
-    return f"تأكيد البيانات:\n\nالاسم: {name_ar}"
+def hz_msg_review_name(name_ar: str):
+    return f"مراجعة الاسم:\n\nالاسم: {name_ar}"
 
 def hz_msg_choose_size():
     return "يرجى اختيار مقاس البطاقة"
@@ -304,10 +304,10 @@ def hz_kb_start_card():
 def hz_kb_start_again():
     return {"inline_keyboard": [[{"text": "ابدأ", "callback_data": "START"}]]}
 
-def hz_kb_confirm_data():
+def hz_kb_review_name():
     return {
         "inline_keyboard": [
-            [{"text": "تأكيد البيانات", "callback_data": "CONFIRM_DATA"}],
+            [{"text": "تأكيد الاسم", "callback_data": "CONFIRM_NAME"}],
             [{"text": "تعديل الاسم", "callback_data": "EDIT_AR"}],
         ]
     }
@@ -329,8 +329,9 @@ def hz_kb_after_ready():
 STATE_MENU = "MENU"
 STATE_WAIT_AR = "WAIT_AR"
 STATE_WAIT_EN = "WAIT_EN"
-STATE_CONFIRM = "CONFIRM"
+STATE_REVIEW_NAME = "REVIEW_NAME"
 STATE_CHOOSE_SIZE = "CHOOSE_SIZE"
+STATE_CONFIRM = "CONFIRM"
 STATE_CREATING = "CREATING"
 
 @dataclass
@@ -537,7 +538,16 @@ async def handle_webhook(req: Request, bot_key: str):
     text = clean_text(text_raw)
     cmd = normalize_cmd(text)
 
-    if text in ("EDIT_AR", "EDIT_EN", "GEN", "GEN_SQUARE", "GEN_VERTICAL", "START_CARD", "START", "CONFIRM_DATA"):
+    if text in (
+        "EDIT_AR",
+        "EDIT_EN",
+        "GEN",
+        "GEN_SQUARE",
+        "GEN_VERTICAL",
+        "START_CARD",
+        "START",
+        "CONFIRM_NAME",
+    ):
         cmd = text
 
     async with s.lock:
@@ -561,6 +571,7 @@ async def handle_webhook(req: Request, bot_key: str):
                 tg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
             return {"ok": True}
 
+        # ---- WAIT_AR
         if s.state == STATE_WAIT_AR:
             ok, val = validate_ar(text)
             if not ok:
@@ -577,10 +588,11 @@ async def handle_webhook(req: Request, bot_key: str):
                 tg_send_message(bot_token, s.chat_id, ar_msg_ask_en(), ar_kb_wait_en())
                 return {"ok": True}
             else:
-                s.state = STATE_CONFIRM
-                tg_send_message(bot_token, s.chat_id, hz_msg_confirm(s.name_ar), hz_kb_confirm_data())
+                s.state = STATE_REVIEW_NAME
+                tg_send_message(bot_token, s.chat_id, hz_msg_review_name(s.name_ar), hz_kb_review_name())
                 return {"ok": True}
 
+        # ---- WAIT_EN (alarabia)
         if s.state == STATE_WAIT_EN:
             if cmd == "EDIT_AR":
                 s.state = STATE_WAIT_AR
@@ -597,50 +609,52 @@ async def handle_webhook(req: Request, bot_key: str):
             tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
             return {"ok": True}
 
-        if s.state == STATE_CONFIRM:
-            if bot_key == "alarabia":
-                if cmd == "EDIT_AR":
-                    s.state = STATE_WAIT_AR
-                    tg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
-                    return {"ok": True}
-                if cmd == "EDIT_EN":
-                    s.state = STATE_WAIT_EN
-                    tg_send_message(bot_token, s.chat_id, ar_msg_ask_en(), ar_kb_wait_en())
-                    return {"ok": True}
+        # ---- REVIEW_NAME (alhafez)
+        if s.state == STATE_REVIEW_NAME and bot_key == "alhafez":
+            if cmd == "EDIT_AR":
+                s.state = STATE_WAIT_AR
+                tg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
+                return {"ok": True}
 
-                if cmd == "GEN":
-                    s.state = STATE_CREATING
-                    tg_send_message(bot_token, s.chat_id, ar_msg_creating())
-                    await job_queue.put(
-                        Job(
-                            bot_key=bot_key,
-                            chat_id=s.chat_id,
-                            name_ar=s.name_ar,
-                            name_en=s.name_en,
-                            template_id=bot["template_square"],
-                            requested_at=time.time(),
-                            seq=s.seq,
-                        )
+            if cmd == "CONFIRM_NAME":
+                s.state = STATE_CHOOSE_SIZE
+                tg_send_message(bot_token, s.chat_id, hz_msg_choose_size(), hz_kb_choose_size())
+                return {"ok": True}
+
+            tg_send_message(bot_token, s.chat_id, hz_msg_review_name(s.name_ar), hz_kb_review_name())
+            return {"ok": True}
+
+        # ---- CONFIRM (alarabia)
+        if s.state == STATE_CONFIRM and bot_key == "alarabia":
+            if cmd == "EDIT_AR":
+                s.state = STATE_WAIT_AR
+                tg_send_message(bot_token, s.chat_id, ar_msg_ask_ar())
+                return {"ok": True}
+            if cmd == "EDIT_EN":
+                s.state = STATE_WAIT_EN
+                tg_send_message(bot_token, s.chat_id, ar_msg_ask_en(), ar_kb_wait_en())
+                return {"ok": True}
+
+            if cmd == "GEN":
+                s.state = STATE_CREATING
+                tg_send_message(bot_token, s.chat_id, ar_msg_creating())
+                await job_queue.put(
+                    Job(
+                        bot_key=bot_key,
+                        chat_id=s.chat_id,
+                        name_ar=s.name_ar,
+                        name_en=s.name_en,
+                        template_id=bot["template_square"],
+                        requested_at=time.time(),
+                        seq=s.seq,
                     )
-                    return {"ok": True}
-
-                tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
+                )
                 return {"ok": True}
 
-            else:
-                if cmd == "EDIT_AR":
-                    s.state = STATE_WAIT_AR
-                    tg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
-                    return {"ok": True}
+            tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
+            return {"ok": True}
 
-                if cmd == "CONFIRM_DATA":
-                    s.state = STATE_CHOOSE_SIZE
-                    tg_send_message(bot_token, s.chat_id, hz_msg_choose_size(), hz_kb_choose_size())
-                    return {"ok": True}
-
-                tg_send_message(bot_token, s.chat_id, hz_msg_confirm(s.name_ar), hz_kb_confirm_data())
-                return {"ok": True}
-
+        # ---- CHOOSE_SIZE (alhafez)
         if s.state == STATE_CHOOSE_SIZE and bot_key == "alhafez":
             if cmd in ("GEN_SQUARE", "GEN_VERTICAL"):
                 s.state = STATE_CREATING
