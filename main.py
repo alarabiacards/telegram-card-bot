@@ -270,11 +270,11 @@ def ar_kb_after_ready():
         ]
     }
 
-# --- AlHafez (Arabic only + official buttons, no emojis)
+# --- AlHafez (Arabic only)
 def hz_msg_welcome():
     return (
-        "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي جمعية الحافظ لتأهيل حفاظ القرآن الكريم\n"
-        "تطوير: عمرو بن عبدالعزيز العديني."
+        "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي جمعية الحافظ لتأهيل حفاظ القرآن الكريم\n\n"
+        "تطوير: عمرو بن عبدالعزيز العديني"
     )
 
 def hz_msg_need_start():
@@ -305,7 +305,6 @@ def hz_kb_start_again():
     return {"inline_keyboard": [[{"text": "ابدأ", "callback_data": "START"}]]}
 
 def hz_kb_choose_type():
-    # ✅ No emojis + wording change inside parentheses
     return {
         "inline_keyboard": [
             [{"text": "إصدار بطاقة (مقاس مربع)", "callback_data": "GEN_SQUARE"}],
@@ -315,11 +314,9 @@ def hz_kb_choose_type():
     }
 
 def hz_kb_after_ready():
-    # ✅ Remove "generate vertical" button after ready (per request)
-    # ✅ No emojis + buttons under each other
+    # ✅ only Start button
     return {
         "inline_keyboard": [
-            [{"text": "إعادة الإصدار", "callback_data": "START_CARD"}],
             [{"text": "البداية", "callback_data": "START"}],
         ]
     }
@@ -521,7 +518,6 @@ async def handle_webhook(req: Request, bot_key: str):
 
     s = get_session(bot_key, chat_id)
 
-    # Dedup
     fp = f"{update_id}|{msg_id}|{cq_id or ''}|{text_raw}"
     async with s.lock:
         if update_id and s.last_update_id >= update_id:
@@ -532,22 +528,13 @@ async def handle_webhook(req: Request, bot_key: str):
             s.last_update_id = update_id
         s.last_fingerprint = fp
 
-    # Answer callback only once
     if cq_id:
         tg_answer_callback(bot_token, cq_id)
 
     text = clean_text(text_raw)
     cmd = normalize_cmd(text)
 
-    if text in (
-        "EDIT_AR",
-        "EDIT_EN",
-        "GEN",
-        "GEN_SQUARE",
-        "GEN_VERTICAL",
-        "START_CARD",
-        "START",
-    ):
+    if text in ("EDIT_AR", "EDIT_EN", "GEN", "GEN_SQUARE", "GEN_VERTICAL", "START_CARD", "START"):
         cmd = text
 
     async with s.lock:
