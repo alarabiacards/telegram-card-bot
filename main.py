@@ -51,7 +51,7 @@ BOT_TOKEN_ALHAFEZ = os.getenv("BOT_TOKEN_ALHAFEZ", "").strip()
 TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_ALHAFEZ_SQUARE", "").strip()
 TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL = os.getenv("TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL", "").strip()
 
-# NEW: AlFalah
+# AlFalah (new)
 BOT_TOKEN_ALFALAH = os.getenv("BOT_TOKEN_ALFALAH", "").strip()
 TEMPLATE_SLIDES_ID_ALFALAH_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_ALFALAH_SQUARE", "").strip()
 TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL = os.getenv("TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL", "").strip()
@@ -134,7 +134,6 @@ def require_env():
     if not TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL:
         raise RuntimeError("TEMPLATE_SLIDES_ID_ALHAFEZ_VERTICAL is missing")
 
-    # NEW: AlFalah env checks
     if not BOT_TOKEN_ALFALAH:
         raise RuntimeError("BOT_TOKEN_ALFALAH is missing")
     if not TEMPLATE_SLIDES_ID_ALFALAH_SQUARE:
@@ -287,18 +286,11 @@ def ar_kb_after_ready():
         ]
     }
 
-# --- Arabic-only flow (AlHafez / AlFalah share same flow)
+# --- AlHafez (Arabic only)
 def hz_msg_welcome():
     return (
         "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي جمعية الحافظ لتأهيل حفاظ القرآن الكريم\n\n"
         "تطوير: عمرو بن عبدالعزيز العديني"
-    )
-
-# NEW: AlFalah welcome (only difference)
-def fl_msg_welcome():
-    return (
-        "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي مدارس الفلاح\n\n"
-        "تطوير: عمرو بن عبدالعزيز اسماعيل"
     )
 
 def hz_msg_need_start():
@@ -349,6 +341,13 @@ def hz_kb_choose_size():
 
 def hz_kb_after_ready():
     return {"inline_keyboard": [[{"text": "البداية", "callback_data": "START"}]]}
+
+# --- AlFalah (same as AlHafez; only welcome differs)
+def fl_msg_welcome():
+    return (
+        "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي مدارس الفلاح\n\n"
+        "تطوير: عمرو بن عبدالعزيز اسماعيل"
+    )
 
 # ---------------------------
 # Session
@@ -586,7 +585,6 @@ async def handle_webhook(req: Request, bot_key: str):
             if bot_key == "alarabia":
                 tg_send_message(bot_token, s.chat_id, ar_msg_welcome(), ar_kb_start_card())
             else:
-                # Arabic-only welcome differs for alfalah فقط
                 if bot_key == "alfalah":
                     tg_send_message(bot_token, s.chat_id, fl_msg_welcome(), hz_kb_start_card())
                 else:
@@ -619,12 +617,11 @@ async def handle_webhook(req: Request, bot_key: str):
 
             s.name_ar = val
 
-            if not is_ar_only:  # alarabia (AR_EN)
+            if not is_ar_only:
                 s.state = STATE_WAIT_EN
                 tg_send_message(bot_token, s.chat_id, ar_msg_ask_en(), ar_kb_wait_en())
                 return {"ok": True}
 
-            # Arabic-only (alhafez / alfalah)
             s.state = STATE_REVIEW_NAME
             tg_send_message(bot_token, s.chat_id, hz_msg_review_name(s.name_ar), hz_kb_review_name())
             return {"ok": True}
@@ -686,7 +683,7 @@ async def handle_webhook(req: Request, bot_key: str):
                         seq=s.seq,
                     )
                 )
-                return {"ok": True}
+                return {"ok": True
 
             tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
             return {"ok": True}
@@ -749,7 +746,6 @@ async def webhook_alarabia(req: Request):
 async def webhook_alhafez(req: Request):
     return await handle_webhook(req, "alhafez")
 
-# NEW: AlFalah webhook
 @app.post("/webhook/alfalah")
 async def webhook_alfalah(req: Request):
     return await handle_webhook(req, "alfalah")
