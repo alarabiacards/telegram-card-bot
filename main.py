@@ -5,7 +5,7 @@ import re
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List, Union
 
 import requests
 from fastapi import FastAPI, Request
@@ -60,7 +60,21 @@ BOT_TOKEN_KOUNUZ_ALWARD = os.getenv("BOT_TOKEN_KOUNUZ_ALWARD", "").strip()
 TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_SQUARE", "").strip()
 TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_VERTICAL = os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_VERTICAL", "").strip()
 
-BOTS = {
+# AMRO (NEW) - عمرو: نفس الفلاح + اختيار التصميم (3 تصاميم)
+BOT_TOKEN_AMRO = os.getenv("BOT_TOKEN_AMRO", "").strip()
+TEMPLATE_SLIDES_ID_AMRO_SQUARE_1 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_SQUARE_1", "").strip()
+TEMPLATE_SLIDES_ID_AMRO_SQUARE_2 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_SQUARE_2", "").strip()
+TEMPLATE_SLIDES_ID_AMRO_SQUARE_3 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_SQUARE_3", "").strip()
+TEMPLATE_SLIDES_ID_AMRO_VERTICAL_1 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_1", "").strip()
+TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2", "").strip()
+TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3", "").strip()
+
+# For BOTS template fields:
+# - old bots keep strings
+# - amro uses lists of 3 templates for square/vertical
+TemplateField = Union[str, List[str]]
+
+BOTS: Dict[str, Dict[str, Any]] = {
     "alarabia": {
         "token": BOT_TOKEN_ALARABIA,
         "template_square": TEMPLATE_SLIDES_ID_ALARABIA_SQUARE,
@@ -79,11 +93,25 @@ BOTS = {
         "template_vertical": TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL,
         "lang_mode": "AR_ONLY",
     },
-    # NEW BOT: same behavior as Alfalah
     "kounuz_alward": {
         "token": BOT_TOKEN_KOUNUZ_ALWARD,
         "template_square": TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_SQUARE,
         "template_vertical": TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_VERTICAL,
+        "lang_mode": "AR_ONLY",
+    },
+    # NEW BOT: AMRO
+    "amro": {
+        "token": BOT_TOKEN_AMRO,
+        "template_square": [
+            TEMPLATE_SLIDES_ID_AMRO_SQUARE_1,
+            TEMPLATE_SLIDES_ID_AMRO_SQUARE_2,
+            TEMPLATE_SLIDES_ID_AMRO_SQUARE_3,
+        ],
+        "template_vertical": [
+            TEMPLATE_SLIDES_ID_AMRO_VERTICAL_1,
+            TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2,
+            TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3,
+        ],
         "lang_mode": "AR_ONLY",
     },
 }
@@ -152,13 +180,20 @@ def require_env():
     if not TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL:
         raise RuntimeError("TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL is missing")
 
-    # NEW BOT checks
     if not BOT_TOKEN_KOUNUZ_ALWARD:
         raise RuntimeError("BOT_TOKEN_KOUNUZ_ALWARD is missing")
     if not TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_SQUARE:
         raise RuntimeError("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_SQUARE is missing")
     if not TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_VERTICAL:
         raise RuntimeError("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_VERTICAL is missing")
+
+    # AMRO checks
+    if not BOT_TOKEN_AMRO:
+        raise RuntimeError("BOT_TOKEN_AMRO is missing")
+    if not (TEMPLATE_SLIDES_ID_AMRO_SQUARE_1 and TEMPLATE_SLIDES_ID_AMRO_SQUARE_2 and TEMPLATE_SLIDES_ID_AMRO_SQUARE_3):
+        raise RuntimeError("TEMPLATE_SLIDES_ID_AMRO_SQUARE_1/2/3 are missing")
+    if not (TEMPLATE_SLIDES_ID_AMRO_VERTICAL_1 and TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2 and TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3):
+        raise RuntimeError("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_1/2/3 are missing")
 
     if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN) and not SERVICE_ACCOUNT_JSON:
         raise RuntimeError("Provide OAuth vars (GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN) or SERVICE_ACCOUNT_JSON")
@@ -305,7 +340,7 @@ def ar_kb_after_ready():
         ]
     }
 
-# --- Arabic-only (AlHafez / AlFalah / Kounuz Alward)
+# --- Arabic-only (AlHafez / AlFalah / Kounuz Alward / Amro)
 def hz_msg_welcome():
     return (
         "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي جمعية الحافظ لتأهيل حفاظ القرآن الكريم\n\n"
@@ -318,11 +353,16 @@ def fl_msg_welcome():
         "تطوير: عمرو بن عبدالعزيز اسماعيل"
     )
 
-# NEW: كنوز الورد (same style as الفلاح)
 def kw_msg_welcome():
     return (
         "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي كنوز الورد\n\n"
         "تطوير: عمرو العديني"
+    )
+
+# NEW: AMRO welcome (نفس نمط الفلاح)
+def amro_msg_welcome():
+    return (
+        "أنا عمرو.. أرحب بكم في بوت إصدار بطاقات التهنئة\n\n"
     )
 
 def hz_msg_need_start():
@@ -339,6 +379,10 @@ def hz_msg_review_name(name_ar: str):
 
 def hz_msg_choose_size():
     return "اختر شكل البطاقة"
+
+# NEW: AMRO choose design
+def amro_msg_choose_design():
+    return "اختر التصميم"
 
 def hz_msg_creating():
     return "جاري إصدار البطاقة..."
@@ -371,6 +415,27 @@ def hz_kb_choose_size():
         ]
     }
 
+# NEW: AMRO designs (3)
+def amro_kb_choose_design(size_key: str):
+    # size_key: "SQUARE" or "VERTICAL"
+    if size_key == "SQUARE":
+        return {
+            "inline_keyboard": [
+                [{"text": "تصميم 1", "callback_data": "AMRO_SQ_1"}],
+                [{"text": "تصميم 2", "callback_data": "AMRO_SQ_2"}],
+                [{"text": "تصميم 3", "callback_data": "AMRO_SQ_3"}],
+                [{"text": "تغيير المقاس", "callback_data": "BACK_SIZE"}],
+            ]
+        }
+    return {
+        "inline_keyboard": [
+            [{"text": "تصميم 1", "callback_data": "AMRO_V_1"}],
+            [{"text": "تصميم 2", "callback_data": "AMRO_V_2"}],
+            [{"text": "تصميم 3", "callback_data": "AMRO_V_3"}],
+            [{"text": "تغيير المقاس", "callback_data": "BACK_SIZE"}],
+        ]
+    }
+
 def hz_kb_after_ready():
     return {"inline_keyboard": [[{"text": "البداية", "callback_data": "START"}]]}
 
@@ -382,6 +447,7 @@ STATE_WAIT_AR = "WAIT_AR"
 STATE_WAIT_EN = "WAIT_EN"
 STATE_REVIEW_NAME = "REVIEW_NAME"
 STATE_CHOOSE_SIZE = "CHOOSE_SIZE"
+STATE_CHOOSE_DESIGN = "CHOOSE_DESIGN"   # NEW (AMRO)
 STATE_CONFIRM = "CONFIRM"
 STATE_CREATING = "CREATING"
 
@@ -396,6 +462,7 @@ class Session:
     last_fingerprint: str = ""
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     seq: int = 0
+    chosen_size: str = ""  # NEW: "SQUARE" or "VERTICAL" for AMRO
 
 sessions: Dict[str, Session] = {}
 
@@ -414,6 +481,7 @@ def reset_session(s: Session):
     s.state = STATE_MENU
     s.name_ar = ""
     s.name_en = ""
+    s.chosen_size = ""
 
 def bump_seq(s: Session):
     s.seq += 1
@@ -559,6 +627,21 @@ def normalize_cmd(text: str) -> str:
     return ""
 
 # ---------------------------
+# Helpers for template picking (AMRO)
+# ---------------------------
+def _get_amro_template_id(bot: Dict[str, Any], size_key: str, idx_1based: int) -> str:
+    if size_key == "SQUARE":
+        arr = bot["template_square"]
+    else:
+        arr = bot["template_vertical"]
+    if not isinstance(arr, list) or len(arr) < idx_1based:
+        raise RuntimeError("AMRO template list is not configured correctly")
+    tid = (arr[idx_1based - 1] or "").strip()
+    if not tid:
+        raise RuntimeError("AMRO template id is empty")
+    return tid
+
+# ---------------------------
 # Core handler (per bot)
 # ---------------------------
 async def handle_webhook(req: Request, bot_key: str):
@@ -590,6 +673,7 @@ async def handle_webhook(req: Request, bot_key: str):
     text = clean_text(text_raw)
     cmd = normalize_cmd(text)
 
+    # accept callbacks as commands
     if text in (
         "EDIT_AR",
         "EDIT_EN",
@@ -599,6 +683,10 @@ async def handle_webhook(req: Request, bot_key: str):
         "START_CARD",
         "START",
         "CONFIRM_NAME",
+        # AMRO callbacks
+        "AMRO_SQ_1", "AMRO_SQ_2", "AMRO_SQ_3",
+        "AMRO_V_1", "AMRO_V_2", "AMRO_V_3",
+        "BACK_SIZE",
     ):
         cmd = text
 
@@ -614,6 +702,8 @@ async def handle_webhook(req: Request, bot_key: str):
                     tg_send_message(bot_token, s.chat_id, fl_msg_welcome(), hz_kb_start_card())
                 elif bot_key == "kounuz_alward":
                     tg_send_message(bot_token, s.chat_id, kw_msg_welcome(), hz_kb_start_card())
+                elif bot_key == "amro":
+                    tg_send_message(bot_token, s.chat_id, amro_msg_welcome(), hz_kb_start_card())
                 else:
                     tg_send_message(bot_token, s.chat_id, hz_msg_welcome(), hz_kb_start_card())
 
@@ -717,7 +807,21 @@ async def handle_webhook(req: Request, bot_key: str):
 
         # ---- CHOOSE_SIZE (Arabic-only)
         if s.state == STATE_CHOOSE_SIZE and is_ar_only:
-            if cmd in ("GEN_SQUARE", "GEN_VERTICAL"):
+            # AMRO special: after size -> ask design
+            if bot_key == "amro":
+                if cmd == "GEN_SQUARE":
+                    s.chosen_size = "SQUARE"
+                    s.state = STATE_CHOOSE_DESIGN
+                    tg_send_message(bot_token, s.chat_id, amro_msg_choose_design(), amro_kb_choose_design("SQUARE"))
+                    return {"ok": True}
+                if cmd == "GEN_VERTICAL":
+                    s.chosen_size = "VERTICAL"
+                    s.state = STATE_CHOOSE_DESIGN
+                    tg_send_message(bot_token, s.chat_id, amro_msg_choose_design(), amro_kb_choose_design("VERTICAL"))
+                    return {"ok": True}
+
+            # default bots: generate directly
+            if cmd in ("GEN_SQUARE", "GEN_VERTICAL") and bot_key != "amro":
                 s.state = STATE_CREATING
                 tg_send_message(bot_token, s.chat_id, hz_msg_creating())
 
@@ -743,9 +847,57 @@ async def handle_webhook(req: Request, bot_key: str):
             tg_send_message(bot_token, s.chat_id, hz_msg_choose_size(), hz_kb_choose_size())
             return {"ok": True}
 
+        # ---- CHOOSE_DESIGN (AMRO only)
+        if s.state == STATE_CHOOSE_DESIGN and bot_key == "amro":
+            if cmd == "BACK_SIZE":
+                s.state = STATE_CHOOSE_SIZE
+                s.chosen_size = ""
+                tg_send_message(bot_token, s.chat_id, hz_msg_choose_size(), hz_kb_choose_size())
+                return {"ok": True}
+
+            # pick template based on callback
+            mapping = {
+                "AMRO_SQ_1": ("SQUARE", 1),
+                "AMRO_SQ_2": ("SQUARE", 2),
+                "AMRO_SQ_3": ("SQUARE", 3),
+                "AMRO_V_1": ("VERTICAL", 1),
+                "AMRO_V_2": ("VERTICAL", 2),
+                "AMRO_V_3": ("VERTICAL", 3),
+            }
+            if cmd in mapping:
+                size_key, idx = mapping[cmd]
+
+                # sanity: ensure size matches chosen_size (optional)
+                if s.chosen_size and s.chosen_size != size_key:
+                    s.chosen_size = size_key
+
+                s.state = STATE_CREATING
+                tg_send_message(bot_token, s.chat_id, hz_msg_creating())
+
+                template_id = _get_amro_template_id(bot, size_key, idx)
+                await job_queue.put(
+                    Job(
+                        bot_key=bot_key,
+                        chat_id=s.chat_id,
+                        name_ar=s.name_ar,
+                        name_en="",
+                        template_id=template_id,
+                        requested_at=time.time(),
+                        seq=s.seq,
+                    )
+                )
+                return {"ok": True}
+
+            # fallback: show designs again
+            if not s.chosen_size:
+                s.chosen_size = "SQUARE"
+            tg_send_message(bot_token, s.chat_id, amro_msg_choose_design(), amro_kb_choose_design(s.chosen_size))
+            return {"ok": True}
+
         if s.state == STATE_CREATING:
             return {"ok": True}
 
+        # fallback
         if bot_key == "alarabia":
             tg_send_message(bot_token, s.chat_id, ar_msg_need_start(), ar_kb_start_again())
         else:
@@ -777,7 +929,11 @@ async def webhook_alhafez(req: Request):
 async def webhook_alfalah(req: Request):
     return await handle_webhook(req, "alfalah")
 
-# NEW ROUTE: كنوز الورد
 @app.post("/webhook/kounuz_alward")
 async def webhook_kounuz_alward(req: Request):
     return await handle_webhook(req, "kounuz_alward")
+
+# NEW ROUTE: AMRO
+@app.post("/webhook/amro")
+async def webhook_amro(req: Request):
+    return await handle_webhook(req, "amro")
