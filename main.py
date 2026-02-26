@@ -378,7 +378,7 @@ def hz_msg_review_name(name_ar: str):
     return f"مراجعة الاسم:\n\nالاسم: {name_ar}"
 
 def hz_msg_choose_size():
-    return "اختر شكل البطاقة"
+    return "اختر مقاس البطاقة"
 
 # NEW: AMRO choose design
 def amro_msg_choose_design():
