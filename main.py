@@ -55,6 +55,11 @@ BOT_TOKEN_ALFALAH = os.getenv("BOT_TOKEN_ALFALAH", "").strip()
 TEMPLATE_SLIDES_ID_ALFALAH_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_ALFALAH_SQUARE", "").strip()
 TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL = os.getenv("TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL", "").strip()
 
+# Kounuz Alward (NEW) - كنوز الورد
+BOT_TOKEN_KOUNUZ_ALWARD = os.getenv("BOT_TOKEN_KOUNUZ_ALWARD", "").strip()
+TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_SQUARE", "").strip()
+TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_VERTICAL = os.getenv("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_VERTICAL", "").strip()
+
 BOTS = {
     "alarabia": {
         "token": BOT_TOKEN_ALARABIA,
@@ -72,6 +77,13 @@ BOTS = {
         "token": BOT_TOKEN_ALFALAH,
         "template_square": TEMPLATE_SLIDES_ID_ALFALAH_SQUARE,
         "template_vertical": TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL,
+        "lang_mode": "AR_ONLY",
+    },
+    # NEW BOT: same behavior as Alfalah
+    "kounuz_alward": {
+        "token": BOT_TOKEN_KOUNUZ_ALWARD,
+        "template_square": TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_SQUARE,
+        "template_vertical": TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_VERTICAL,
         "lang_mode": "AR_ONLY",
     },
 }
@@ -139,6 +151,14 @@ def require_env():
         raise RuntimeError("TEMPLATE_SLIDES_ID_ALFALAH_SQUARE is missing")
     if not TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL:
         raise RuntimeError("TEMPLATE_SLIDES_ID_ALFALAH_VERTICAL is missing")
+
+    # NEW BOT checks
+    if not BOT_TOKEN_KOUNUZ_ALWARD:
+        raise RuntimeError("BOT_TOKEN_KOUNUZ_ALWARD is missing")
+    if not TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_SQUARE:
+        raise RuntimeError("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_SQUARE is missing")
+    if not TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_VERTICAL:
+        raise RuntimeError("TEMPLATE_SLIDES_ID_KOUNUZ_ALWARD_VERTICAL is missing")
 
     if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN) and not SERVICE_ACCOUNT_JSON:
         raise RuntimeError("Provide OAuth vars (GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN) or SERVICE_ACCOUNT_JSON")
@@ -285,7 +305,7 @@ def ar_kb_after_ready():
         ]
     }
 
-# --- Arabic-only (AlHafez / AlFalah)
+# --- Arabic-only (AlHafez / AlFalah / Kounuz Alward)
 def hz_msg_welcome():
     return (
         "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي جمعية الحافظ لتأهيل حفاظ القرآن الكريم\n\n"
@@ -295,6 +315,13 @@ def hz_msg_welcome():
 def fl_msg_welcome():
     return (
         "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي مدارس الفلاح\n\n"
+        "تطوير: عمرو بن عبدالعزيز اسماعيل"
+    )
+
+# NEW: كنوز الورد (same style as الفلاح)
+def kw_msg_welcome():
+    return (
+        "مرحبا بكم في بوت إصدار بطاقات التهنئة لمنسوبي كنوز الورد\n\n"
         "تطوير: عمرو بن عبدالعزيز اسماعيل"
     )
 
@@ -310,7 +337,6 @@ def hz_msg_invalid_ar(reason_ar: str):
 def hz_msg_review_name(name_ar: str):
     return f"مراجعة الاسم:\n\nالاسم: {name_ar}"
 
-# CHANGED TEXT (for AlHafez & AlFalah)
 def hz_msg_choose_size():
     return "اختر شكل البطاقة"
 
@@ -337,7 +363,6 @@ def hz_kb_review_name():
         ]
     }
 
-# CHANGED BUTTONS (for AlHafez & AlFalah)
 def hz_kb_choose_size():
     return {
         "inline_keyboard": [
@@ -587,6 +612,8 @@ async def handle_webhook(req: Request, bot_key: str):
             else:
                 if bot_key == "alfalah":
                     tg_send_message(bot_token, s.chat_id, fl_msg_welcome(), hz_kb_start_card())
+                elif bot_key == "kounuz_alward":
+                    tg_send_message(bot_token, s.chat_id, kw_msg_welcome(), hz_kb_start_card())
                 else:
                     tg_send_message(bot_token, s.chat_id, hz_msg_welcome(), hz_kb_start_card())
 
@@ -749,3 +776,8 @@ async def webhook_alhafez(req: Request):
 @app.post("/webhook/alfalah")
 async def webhook_alfalah(req: Request):
     return await handle_webhook(req, "alfalah")
+
+# NEW ROUTE: كنوز الورد
+@app.post("/webhook/kounuz_alward")
+async def webhook_kounuz_alward(req: Request):
+    return await handle_webhook(req, "kounuz_alward")
