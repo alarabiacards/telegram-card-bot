@@ -316,9 +316,11 @@ def tg_toast(bot_token: str, callback_query_id: str, text: str, show_alert: bool
         )
 
 
-def tg_send_photo(bot_token: str, chat_id: str, png_bytes: bytes, caption: str, reply_markup: Optional[dict] = None) -> None:
+def tg_send_photo(bot_token: str, chat_id: str, png_bytes: bytes, caption: str = "", reply_markup: Optional[dict] = None) -> None:
     files = {"photo": ("card.png", png_bytes)}
-    data = {"chat_id": chat_id, "caption": caption}
+    data = {"chat_id": chat_id}
+    if caption:
+        data["caption"] = caption
     if reply_markup is not None:
         data["reply_markup"] = json.dumps(reply_markup)
     tg(bot_token, "sendPhoto", data=data, files=files)
@@ -505,7 +507,8 @@ def ar_msg_welcome(bot_key: str) -> str:
 
 
 def ar_msg_need_start() -> str:
-    return "الرجاء إرسال /start للبدء من جديد." + DIV + "Please send /start to start again."
+    # CHANGED: add guidance to press the button below
+    return "للعودة للبداية، الرجاء إرسال /start أو اضغط زر (ابدأ) أدناه." + DIV + "To start again, send /start or tap Start below."
 
 
 def ar_msg_ask_ar() -> str:
@@ -531,31 +534,31 @@ def ar_msg_confirm(name_ar: str, name_en: str) -> str:
 
 
 def ar_msg_creating() -> str:
-    return "جاري توليد البطاقة..." + DIV + "Generating your card..."
+    return "جاري إصدار البطاقة..." + DIV + "Issuing your card..."
 
 
 def ar_msg_still_working() -> str:
-    return "لا يزال جاري توليد البطاقة..." + DIV + "Still generating your card..."
+    return "لا يزال جاري إصدار البطاقة..." + DIV + "Still issuing your card..."
 
 
 def ar_msg_ready() -> str:
-    return "تم إنشاء البطاقة." + DIV + "Your card is ready."
+    # CHANGED: use إصدار بدل إنشاء
+    return "تم إصدار البطاقة بنجاح." + DIV + "Your card has been issued successfully."
 
 
 def ar_msg_error(err: str) -> str:
-    return "خطأ أثناء إنشاء البطاقة:\n" + err + DIV + "Error while creating the card:\n" + err
+    return "خطأ أثناء إصدار البطاقة:\n" + err + DIV + "Error while issuing the card:\n" + err
 
 
 def ar_kb_start_card() -> dict:
-    return {"inline_keyboard": [[{"text": "إصدار بطاقة تهنئة / Generate Card", "callback_data": "START_CARD"}]]}
+    return {"inline_keyboard": [[{"text": "إصدار بطاقة تهنئة / Issue Card", "callback_data": "START_CARD"}]]}
 
 
 def ar_kb_start_again() -> dict:
-    return {"inline_keyboard": [[{"text": "Start / ابدأ", "callback_data": "START"}]]}
+    return {"inline_keyboard": [[{"text": "↩️ Start / ابدأ", "callback_data": "START"}]]}
 
 
 def ar_kb_wait_en() -> dict:
-    # renamed button, removed cancel from here (noisy)
     return {
         "inline_keyboard": [
             [{"text": "تعديل الاسم العربي / Edit Arabic", "callback_data": "EDIT_AR"}],
@@ -564,10 +567,9 @@ def ar_kb_wait_en() -> dict:
 
 
 def ar_kb_confirm() -> dict:
-    # keep cancel ONLY here (last step)
     return {
         "inline_keyboard": [
-            [{"text": "توليد البطاقة / Generate", "callback_data": "GEN"}],
+            [{"text": "إصدار البطاقة / Issue", "callback_data": "GEN"}],
             [
                 {"text": "تعديل العربي / Edit Arabic", "callback_data": "EDIT_AR"},
                 {"text": "تعديل الإنجليزي / Edit English", "callback_data": "EDIT_EN"},
@@ -580,8 +582,8 @@ def ar_kb_confirm() -> dict:
 def ar_kb_after_ready() -> dict:
     return {
         "inline_keyboard": [
-            [{"text": "إصدار بطاقة أخرى / Generate Another Card", "callback_data": "START_CARD"}],
-            [{"text": "Start / ابدأ", "callback_data": "START"}],
+            [{"text": "إصدار بطاقة أخرى / Issue Another Card", "callback_data": "START_CARD"}],
+            [{"text": "↩️ Start / ابدأ", "callback_data": "START"}],
         ]
     }
 
@@ -593,7 +595,8 @@ def hz_msg_welcome(bot_key: str) -> str:
 
 
 def hz_msg_need_start() -> str:
-    return "الرجاء إرسال /start للبدء من جديد."
+    # CHANGED: add guidance to press the button below
+    return "للعودة للبداية، الرجاء إرسال /start أو اضغط زر (البداية) أدناه."
 
 
 def hz_msg_ask_name() -> str:
@@ -615,16 +618,12 @@ def hz_msg_choose_size(supports_vertical: bool) -> str:
 
 
 def hz_msg_choose_design(design_count: int) -> str:
-    # CHANGED: wording
     if design_count <= 1:
         return "التصميم الافتراضي"
     return "اختر رقم التصميم"
 
 
 def hz_msg_preview(name_ar: str, size_label: str, design_number: int) -> str:
-    # CHANGED:
-    # - "ملخص البطاقة قبل الإصدار" بدل "ملخص الطلب قبل الإصدار"
-    # - "رقم التصميم: 1" بدل "التصميم: التصميم 1"
     return (
         "ملخص البطاقة قبل الإصدار:\n\n"
         f"الاسم: {name_ar}\n"
@@ -643,25 +642,24 @@ def hz_msg_still_working() -> str:
 
 
 def hz_msg_ready() -> str:
-    return "تم إصدار البطاقة."
+    # CHANGED: use إصدار
+    return "تم إصدار البطاقة بنجاح."
 
 
 def hz_msg_error(err: str) -> str:
     return "خطأ أثناء إصدار البطاقة:\n" + err
 
 
-# --- Arabic-only keyboards (removed extra buttons as requested)
+# --- Arabic-only keyboards
 def hz_kb_start_card() -> dict:
     return {"inline_keyboard": [[{"text": "إصدار بطاقة تهنئة", "callback_data": "START_CARD"}]]}
 
 
 def hz_kb_start_again() -> dict:
-    # CHANGED: add ↩️ emoji
     return {"inline_keyboard": [[{"text": "↩️ البداية", "callback_data": "START"}]]}
 
 
 def hz_kb_review_name() -> dict:
-    # ONLY confirm + edit (no use same, no cancel)
     return {
         "inline_keyboard": [
             [{"text": "تأكيد الاسم", "callback_data": "CONFIRM_NAME"}],
@@ -671,7 +669,6 @@ def hz_kb_review_name() -> dict:
 
 
 def hz_kb_choose_size(supports_vertical: bool) -> dict:
-    # removed cancel
     if supports_vertical:
         return {
             "inline_keyboard": [
@@ -683,9 +680,6 @@ def hz_kb_choose_size(supports_vertical: bool) -> dict:
 
 
 def kb_choose_design(size_key: str, design_count: int) -> dict:
-    # CHANGED:
-    # - message says "اختر رقم التصميم"
-    # - answers are 1 / 2 / 3 (not "تصميم 1")
     s_prefix = "S" if size_key == "SQUARE" else "V"
     rows = []
     for i in range(1, max(1, design_count) + 1):
@@ -694,7 +688,6 @@ def kb_choose_design(size_key: str, design_count: int) -> dict:
 
 
 def kb_preview_ar(supports_vertical: bool, design_count: int) -> dict:
-    # keep preview controls; add emoji as "color-like" emphasis; cancel only here
     rows = [
         [{"text": "✅ تأكيد الإصدار", "callback_data": "CONFIRM_GEN"}],
         [{"text": "تعديل الاسم", "callback_data": "EDIT_AR"}],
@@ -702,14 +695,12 @@ def kb_preview_ar(supports_vertical: bool, design_count: int) -> dict:
     if supports_vertical:
         rows.append([{"text": "تغيير المقاس", "callback_data": "BACK_SIZE"}])
     if design_count > 1:
-        rows.append([{"text": "تغيير رقم التصميم", "callback_data": "BACK_DESIGN"}])  # CHANGED wording
-
+        rows.append([{"text": "تغيير رقم التصميم", "callback_data": "BACK_DESIGN"}])
     rows.append([{"text": "❌ إلغاء العملية", "callback_data": "CANCEL"}])
     return {"inline_keyboard": rows}
 
 
 def hz_kb_after_ready() -> dict:
-    # CHANGED: ↩️ emoji
     return {"inline_keyboard": [[{"text": "↩️ البداية", "callback_data": "START"}]]}
 
 
@@ -742,8 +733,6 @@ class Session:
     last_name_ar: str = ""     # last used name
     last_gen_ts: float = 0     # rate limit only for generation
     creating_msg_id: int = 0
-
-    # NEW: fingerprint dedupe window
     recent_fps: Dict[str, float] = field(default_factory=dict)
 
 
@@ -848,10 +837,14 @@ async def process_job(job: Job):
                 log.info("Skip stale result for %s", job.chat_id)
                 return
 
+        # ✅ الصورة لحالها (بدون كابشن وبدون أزرار)
+        tg_send_photo(bot_token, job.chat_id, png_bytes, caption="", reply_markup=None)
+
+        # ✅ بعدها رسالة نجاح + الأزرار (حتى ما تكون الأزرار على نفس البطاقة)
         if bot["lang_mode"] == "AR_EN":
-            tg_send_photo(bot_token, job.chat_id, png_bytes, ar_msg_ready(), ar_kb_after_ready())
+            tg_send_message(bot_token, job.chat_id, ar_msg_ready(), ar_kb_after_ready())
         else:
-            tg_send_photo(bot_token, job.chat_id, png_bytes, hz_msg_ready(), hz_kb_after_ready())
+            tg_send_message(bot_token, job.chat_id, hz_msg_ready(), hz_kb_after_ready())
 
         async with s.lock:
             s.last_name_ar = job.name_ar or s.last_name_ar
@@ -986,11 +979,6 @@ def size_label_ar(size_key: str) -> str:
     return "مربع" if size_key == "SQUARE" else "طولي"
 
 
-# NOTE: kept for compatibility; now we show number directly in preview
-def design_label_ar(design_idx: int) -> str:
-    return f"{design_idx}"
-
-
 # ---------------------------
 # Core handler (per bot)
 # ---------------------------
@@ -1037,11 +1025,9 @@ async def handle_webhook(req: Request, bot_key: str):
     fp = f"{update_id}|{msg_id}|{cq_id or ''}|{cmd}|{text}"
     now = time.time()
     async with s.lock:
-        # basic update_id dedupe
         if update_id and s.last_update_id >= update_id:
             return {"ok": True}
 
-        # purge old fingerprints
         if s.recent_fps:
             stale = [k for k, ts in s.recent_fps.items() if (now - ts) > FP_DEDUP_SECONDS]
             for k in stale:
@@ -1054,18 +1040,15 @@ async def handle_webhook(req: Request, bot_key: str):
         if update_id:
             s.last_update_id = update_id
 
-    # acknowledge callback (silently)
     if cq_id:
         tg_answer_callback(bot_token, cq_id)
 
     async with s.lock:
-        # ---- During CREATING: prevent extra generation, respond with Toast instead of chat spam
         if s.state == STATE_CREATING and cmd in GEN_COMMANDS:
             if cq_id:
                 tg_toast(bot_token, cq_id, "⏳ جاري إصدار البطاقة... الرجاء الانتظار", show_alert=False)
             return {"ok": True}
 
-        # ---- Rate limit ONLY on generation
         if cmd in GEN_COMMANDS:
             if (now - s.last_gen_ts) < RATE_LIMIT_SECONDS:
                 remaining = RATE_LIMIT_SECONDS - (now - s.last_gen_ts)
@@ -1076,7 +1059,6 @@ async def handle_webhook(req: Request, bot_key: str):
                 return {"ok": True}
             s.last_gen_ts = now
 
-        # cancel at any stage (button shown only in last step keyboards)
         if cmd == "CANCEL":
             bump_seq(s)
             reset_session(s, keep_last_name=True)
@@ -1111,7 +1093,6 @@ async def handle_webhook(req: Request, bot_key: str):
                 tg_send_message(bot_token, s.chat_id, hz_msg_ask_name())
             return {"ok": True}
 
-        # ---- WAIT_AR
         if s.state == STATE_WAIT_AR:
             ok, val = validate_ar(text)
             if not ok:
@@ -1132,7 +1113,6 @@ async def handle_webhook(req: Request, bot_key: str):
             tg_send_message(bot_token, s.chat_id, hz_msg_review_name(s.name_ar), hz_kb_review_name())
             return {"ok": True}
 
-        # ---- WAIT_EN (AR_EN only)
         if s.state == STATE_WAIT_EN and (not is_ar_only):
             if cmd == "EDIT_AR":
                 s.state = STATE_WAIT_AR
@@ -1149,7 +1129,6 @@ async def handle_webhook(req: Request, bot_key: str):
             tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
             return {"ok": True}
 
-        # ---- REVIEW_NAME (Arabic-only)
         if s.state == STATE_REVIEW_NAME and is_ar_only:
             if cmd == "EDIT_AR":
                 s.state = STATE_WAIT_AR
@@ -1164,7 +1143,6 @@ async def handle_webhook(req: Request, bot_key: str):
             tg_send_message(bot_token, s.chat_id, hz_msg_review_name(s.name_ar), hz_kb_review_name())
             return {"ok": True}
 
-        # ---- CONFIRM (AR_EN only)
         if s.state == STATE_CONFIRM and (not is_ar_only):
             if cmd == "EDIT_AR":
                 s.state = STATE_WAIT_AR
@@ -1207,7 +1185,6 @@ async def handle_webhook(req: Request, bot_key: str):
             tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
             return {"ok": True}
 
-        # ---- CHOOSE_SIZE (Arabic-only)
         if s.state == STATE_CHOOSE_SIZE and is_ar_only:
             if cmd == "GEN_SQUARE":
                 s.chosen_size = "SQUARE"
@@ -1244,7 +1221,6 @@ async def handle_webhook(req: Request, bot_key: str):
             tg_send_message(bot_token, s.chat_id, hz_msg_choose_size(supports_vertical), hz_kb_choose_size(supports_vertical))
             return {"ok": True}
 
-        # ---- CHOOSE_DESIGN (Arabic-only)
         if s.state == STATE_CHOOSE_DESIGN and is_ar_only:
             if cmd.startswith("DESIGN_"):
                 parts = cmd.split("_")
@@ -1264,13 +1240,11 @@ async def handle_webhook(req: Request, bot_key: str):
                     )
                     return {"ok": True}
 
-            # fallback
             if not s.chosen_size:
                 s.chosen_size = "SQUARE"
             tg_send_message(bot_token, s.chat_id, hz_msg_choose_design(design_count), kb_choose_design(s.chosen_size, design_count))
             return {"ok": True}
 
-        # ---- PREVIEW_AR (Arabic-only)
         if s.state == STATE_PREVIEW_AR and is_ar_only:
             if cmd == "BACK_SIZE" and supports_vertical:
                 s.state = STATE_CHOOSE_SIZE
@@ -1320,7 +1294,6 @@ async def handle_webhook(req: Request, bot_key: str):
                 )
                 return {"ok": True}
 
-            # show preview again
             if not s.chosen_size:
                 s.chosen_size = "SQUARE"
             tg_send_message(
@@ -1331,11 +1304,9 @@ async def handle_webhook(req: Request, bot_key: str):
             )
             return {"ok": True}
 
-        # if creating, ignore other chatter
         if s.state == STATE_CREATING:
             return {"ok": True}
 
-        # fallback
         if not is_ar_only:
             tg_send_message(bot_token, s.chat_id, ar_msg_need_start(), ar_kb_start_again())
         else:
@@ -1351,8 +1322,13 @@ async def startup():
     require_env()
     for i in range(max(1, WORKER_COUNT)):
         asyncio.create_task(worker_loop(i + 1))
-    log.info("App started (workers=%s, max_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss)",
-             WORKER_COUNT, MAX_QUEUE_SIZE, RATE_LIMIT_SECONDS, FP_DEDUP_SECONDS)
+    log.info(
+        "App started (workers=%s, max_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss)",
+        WORKER_COUNT,
+        MAX_QUEUE_SIZE,
+        RATE_LIMIT_SECONDS,
+        FP_DEDUP_SECONDS,
+    )
 
 
 @app.get("/")
