@@ -26,25 +26,23 @@ log = logging.getLogger("telegram-multi-card-bot")
 # ---------------------------
 # Tunables (Reliability / Load / Security)
 # ---------------------------
-HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "20"))  # general requests
-EXPORT_TIMEOUT = int(os.getenv("EXPORT_TIMEOUT", "45"))  # export/png can be slower
+HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "20"))
+EXPORT_TIMEOUT = int(os.getenv("EXPORT_TIMEOUT", "45"))
 MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", "200"))
-WORKER_COUNT = int(os.getenv("WORKER_COUNT", "3"))  # 2-4 recommended
+WORKER_COUNT = int(os.getenv("WORKER_COUNT", "3"))
 
 # IMPORTANT: rate limit ONLY on generation
-RATE_LIMIT_SECONDS = float(os.getenv("RATE_LIMIT_SECONDS", "10"))  # 1 gen request / X sec per chat
-PROGRESS_PING_SECONDS = float(os.getenv("PROGRESS_PING_SECONDS", "8"))  # "still working..." after X sec
+RATE_LIMIT_SECONDS = float(os.getenv("RATE_LIMIT_SECONDS", "10"))
+PROGRESS_PING_SECONDS = float(os.getenv("PROGRESS_PING_SECONDS", "8"))
 
 RETRY_MAX_ATTEMPTS = int(os.getenv("RETRY_MAX_ATTEMPTS", "5"))
 RETRY_BASE_DELAY = float(os.getenv("RETRY_BASE_DELAY", "0.7"))
 RETRY_MAX_DELAY = float(os.getenv("RETRY_MAX_DELAY", "8.0"))
 
-# Fingerprint dedupe window (seconds)
 FP_DEDUP_SECONDS = int(os.getenv("FP_DEDUP_SECONDS", "60"))
 
 TG_API = "https://api.telegram.org/bot{}/{}"
 
-# Only these are rate-limited + blocked during creating
 GEN_COMMANDS = {"GEN", "CONFIRM_GEN"}
 
 # ---------------------------
@@ -64,7 +62,7 @@ PLACEHOLDER_AR = os.getenv("PLACEHOLDER_AR", "<<Name in Arabic>>")
 PLACEHOLDER_EN = os.getenv("PLACEHOLDER_EN", "<<Name in English>>")
 
 # ---------------------------
-# Env (Bots) - legacy vars kept
+# Env (Bots)
 # ---------------------------
 BOT_TOKEN_ALARABIA = os.getenv("BOT_TOKEN_ALARABIA", "").strip()
 TEMPLATE_SLIDES_ID_ALARABIA_SQUARE = os.getenv("TEMPLATE_SLIDES_ID_ALARABIA_SQUARE", "").strip()
@@ -89,12 +87,7 @@ TEMPLATE_SLIDES_ID_AMRO_VERTICAL_1 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL
 TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_2", "").strip()
 TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3 = os.getenv("TEMPLATE_SLIDES_ID_AMRO_VERTICAL_3", "").strip()
 
-# For templates
 TemplateField = Union[str, List[str]]
-
-# ---------------------------
-# Optional: External config (JSON) to ease adding bots
-# ---------------------------
 BOTS_CONFIG_JSON = os.getenv("BOTS_CONFIG_JSON", "").strip()
 
 
@@ -181,9 +174,6 @@ def load_bots_config() -> Dict[str, Dict[str, Any]]:
 
 BOTS: Dict[str, Dict[str, Any]] = load_bots_config()
 
-# ---------------------------
-# App
-# ---------------------------
 app = FastAPI()
 
 # ---------------------------
@@ -207,28 +197,16 @@ def request_with_retry(method: str, url: str, *, timeout: int, **kwargs) -> requ
             if r.status_code == 200:
                 return r
             if _is_retryable_status(r.status_code):
-                log.warning(
-                    "Retryable HTTP %s on %s (attempt %s/%s): %s",
-                    r.status_code,
-                    url,
-                    attempt,
-                    RETRY_MAX_ATTEMPTS,
-                    r.text[:300],
-                )
+                log.warning("Retryable HTTP %s on %s (attempt %s/%s): %s",
+                            r.status_code, url, attempt, RETRY_MAX_ATTEMPTS, r.text[:300])
                 if attempt < RETRY_MAX_ATTEMPTS:
                     _sleep_backoff(attempt)
                     continue
             return r
         except (requests.Timeout, requests.ConnectionError, requests.RequestException) as e:
             last_exc = e
-            log.warning(
-                "Network error on %s %s (attempt %s/%s): %s",
-                method,
-                url,
-                attempt,
-                RETRY_MAX_ATTEMPTS,
-                repr(e),
-            )
+            log.warning("Network error on %s %s (attempt %s/%s): %s",
+                        method, url, attempt, RETRY_MAX_ATTEMPTS, repr(e))
             if attempt < RETRY_MAX_ATTEMPTS:
                 _sleep_backoff(attempt)
                 continue
@@ -251,14 +229,16 @@ def google_execute_with_retry(fn, *, label: str = "google_call"):
             except Exception:
                 pass
             if status and _is_retryable_status(status) and attempt < RETRY_MAX_ATTEMPTS:
-                log.warning("Retryable Google HttpError %s (%s) attempt %s/%s", status, label, attempt, RETRY_MAX_ATTEMPTS)
+                log.warning("Retryable Google HttpError %s (%s) attempt %s/%s",
+                            status, label, attempt, RETRY_MAX_ATTEMPTS)
                 _sleep_backoff(attempt)
                 continue
             raise
         except Exception as e:
             last_exc = e
             if attempt < RETRY_MAX_ATTEMPTS and isinstance(e, (TimeoutError, ConnectionError)):
-                log.warning("Retryable Google error (%s) attempt %s/%s: %s", label, attempt, RETRY_MAX_ATTEMPTS, repr(e))
+                log.warning("Retryable Google error (%s) attempt %s/%s: %s",
+                            label, attempt, RETRY_MAX_ATTEMPTS, repr(e))
                 _sleep_backoff(attempt)
                 continue
             raise
@@ -268,7 +248,7 @@ def google_execute_with_retry(fn, *, label: str = "google_call"):
 
 
 # ---------------------------
-# Telegram helpers (per-bot token) + retry
+# Telegram helpers
 # ---------------------------
 def tg(bot_token: str, method: str, data: Optional[dict] = None, files: Optional[dict] = None) -> requests.Response:
     url = TG_API.format(bot_token, method)
@@ -303,17 +283,12 @@ def tg_answer_callback(bot_token: str, callback_query_id: str) -> None:
 
 
 def tg_toast(bot_token: str, callback_query_id: str, text: str, show_alert: bool = False) -> None:
-    # Toast if show_alert=False
     if callback_query_id:
-        tg(
-            bot_token,
-            "answerCallbackQuery",
-            {
-                "callback_query_id": callback_query_id,
-                "text": text,
-                "show_alert": "true" if show_alert else "false",
-            },
-        )
+        tg(bot_token, "answerCallbackQuery", {
+            "callback_query_id": callback_query_id,
+            "text": text,
+            "show_alert": "true" if show_alert else "false",
+        })
 
 
 def tg_send_photo(bot_token: str, chat_id: str, png_bytes: bytes, caption: str = "", reply_markup: Optional[dict] = None) -> None:
@@ -343,7 +318,6 @@ def require_env():
 
         design_count = int(bot.get("design_count") or 1)
         supports_vertical = bool(bot.get("supports_vertical"))
-
         tsq = bot.get("template_square")
         tv = bot.get("template_vertical")
 
@@ -365,7 +339,6 @@ def require_env():
 
 def build_clients():
     global _drive, _slides, _creds
-
     if _drive and _slides and _creds:
         try:
             if not _creds.valid or _creds.expired:
@@ -436,9 +409,10 @@ def validate_en(name: str) -> Tuple[bool, str]:
 
 
 # ---------------------------
-# Messages / Keyboards (unified)
+# Messages / Keyboards
 # ---------------------------
-DIV = "\n--------------------\n"
+# CHANGED: spacing around divider
+DIV = "\n\n--------------------\n\n"
 
 
 def msg_high_load(ar_only: bool) -> str:
@@ -453,7 +427,6 @@ def msg_rate_limited(ar_only: bool, seconds: float) -> str:
     return f"Please wait {int(seconds)} seconds then try again." + DIV + "تم استقبال طلب توليد قبل قليل. حاول بعد قليل."
 
 
-# --- Branding messages
 BRANDING: Dict[str, Dict[str, str]] = {
     "alarabia": {
         "welcome_ar": (
@@ -498,16 +471,15 @@ def get_branding(bot_key: str) -> Dict[str, str]:
     return BRANDING.get(branding_key, BRANDING.get(bot_key, {"welcome_ar": "مرحباً بك"}))
 
 
-# --- AR/EN bot messages
 def ar_msg_welcome(bot_key: str) -> str:
     br = get_branding(bot_key)
     ar = br.get("welcome_ar", "مرحباً بك")
     en = br.get("welcome_en", "Welcome")
+    # DIV already has blank lines around it
     return ar + DIV + en
 
 
 def ar_msg_need_start() -> str:
-    # CHANGED: add guidance to press the button below
     return "للعودة للبداية، الرجاء إرسال /start أو اضغط زر (ابدأ) أدناه." + DIV + "To start again, send /start or tap Start below."
 
 
@@ -534,24 +506,24 @@ def ar_msg_confirm(name_ar: str, name_en: str) -> str:
 
 
 def ar_msg_creating() -> str:
-    return "جاري إصدار البطاقة..." + DIV + "Issuing your card..."
+    return "جاري توليد البطاقة..." + DIV + "Generating your card..."
 
 
 def ar_msg_still_working() -> str:
-    return "لا يزال جاري إصدار البطاقة..." + DIV + "Still issuing your card..."
+    return "لا يزال جاري توليد البطاقة..." + DIV + "Still generating your card..."
 
 
 def ar_msg_ready() -> str:
-    # CHANGED: use إصدار بدل إنشاء
-    return "تم إصدار البطاقة بنجاح." + DIV + "Your card has been issued successfully."
+    return "تم إصدار البطاقة بنجاح." + DIV + "Your card is ready."
 
 
 def ar_msg_error(err: str) -> str:
-    return "خطأ أثناء إصدار البطاقة:\n" + err + DIV + "Error while issuing the card:\n" + err
+    return "خطأ أثناء توليد البطاقة:\n" + err + DIV + "Error while generating the card:\n" + err
 
 
 def ar_kb_start_card() -> dict:
-    return {"inline_keyboard": [[{"text": "إصدار بطاقة تهنئة / Issue Card", "callback_data": "START_CARD"}]]}
+    # CHANGED back to Generate wording
+    return {"inline_keyboard": [[{"text": "إصدار بطاقة تهنئة / Generate Card", "callback_data": "START_CARD"}]]}
 
 
 def ar_kb_start_again() -> dict:
@@ -559,17 +531,14 @@ def ar_kb_start_again() -> dict:
 
 
 def ar_kb_wait_en() -> dict:
-    return {
-        "inline_keyboard": [
-            [{"text": "تعديل الاسم العربي / Edit Arabic", "callback_data": "EDIT_AR"}],
-        ]
-    }
+    return {"inline_keyboard": [[{"text": "تعديل الاسم العربي / Edit Arabic", "callback_data": "EDIT_AR"}]]}
 
 
 def ar_kb_confirm() -> dict:
+    # CHANGED back to Generate wording
     return {
         "inline_keyboard": [
-            [{"text": "إصدار البطاقة / Issue", "callback_data": "GEN"}],
+            [{"text": "توليد البطاقة / Generate", "callback_data": "GEN"}],
             [
                 {"text": "تعديل العربي / Edit Arabic", "callback_data": "EDIT_AR"},
                 {"text": "تعديل الإنجليزي / Edit English", "callback_data": "EDIT_EN"},
@@ -580,22 +549,22 @@ def ar_kb_confirm() -> dict:
 
 
 def ar_kb_after_ready() -> dict:
+    # CHANGED back to Generate wording
     return {
         "inline_keyboard": [
-            [{"text": "إصدار بطاقة أخرى / Issue Another Card", "callback_data": "START_CARD"}],
+            [{"text": "إصدار بطاقة أخرى / Generate Another Card", "callback_data": "START_CARD"}],
             [{"text": "↩️ Start / ابدأ", "callback_data": "START"}],
         ]
     }
 
 
-# --- Arabic-only messages
+# Arabic-only
 def hz_msg_welcome(bot_key: str) -> str:
     br = get_branding(bot_key)
     return br.get("welcome_ar", "مرحباً بك")
 
 
 def hz_msg_need_start() -> str:
-    # CHANGED: add guidance to press the button below
     return "للعودة للبداية، الرجاء إرسال /start أو اضغط زر (البداية) أدناه."
 
 
@@ -612,15 +581,11 @@ def hz_msg_review_name(name_ar: str) -> str:
 
 
 def hz_msg_choose_size(supports_vertical: bool) -> str:
-    if supports_vertical:
-        return "اختر مقاس البطاقة"
-    return "المقاس المتاح: مربع"
+    return "اختر مقاس البطاقة" if supports_vertical else "المقاس المتاح: مربع"
 
 
 def hz_msg_choose_design(design_count: int) -> str:
-    if design_count <= 1:
-        return "التصميم الافتراضي"
-    return "اختر رقم التصميم"
+    return "اختر رقم التصميم" if design_count > 1 else "التصميم الافتراضي"
 
 
 def hz_msg_preview(name_ar: str, size_label: str, design_number: int) -> str:
@@ -634,23 +599,21 @@ def hz_msg_preview(name_ar: str, size_label: str, design_number: int) -> str:
 
 
 def hz_msg_creating() -> str:
-    return "جاري إصدار البطاقة..."
+    return "جاري توليد البطاقة..."
 
 
 def hz_msg_still_working() -> str:
-    return "لا يزال جاري إصدار البطاقة..."
+    return "لا يزال جاري توليد البطاقة..."
 
 
 def hz_msg_ready() -> str:
-    # CHANGED: use إصدار
     return "تم إصدار البطاقة بنجاح."
 
 
 def hz_msg_error(err: str) -> str:
-    return "خطأ أثناء إصدار البطاقة:\n" + err
+    return "خطأ أثناء توليد البطاقة:\n" + err
 
 
-# --- Arabic-only keyboards
 def hz_kb_start_card() -> dict:
     return {"inline_keyboard": [[{"text": "إصدار بطاقة تهنئة", "callback_data": "START_CARD"}]]}
 
@@ -660,22 +623,14 @@ def hz_kb_start_again() -> dict:
 
 
 def hz_kb_review_name() -> dict:
-    return {
-        "inline_keyboard": [
-            [{"text": "تأكيد الاسم", "callback_data": "CONFIRM_NAME"}],
-            [{"text": "تعديل الاسم", "callback_data": "EDIT_AR"}],
-        ]
-    }
+    return {"inline_keyboard": [[{"text": "تأكيد الاسم", "callback_data": "CONFIRM_NAME"}],
+                                [{"text": "تعديل الاسم", "callback_data": "EDIT_AR"}]]}
 
 
 def hz_kb_choose_size(supports_vertical: bool) -> dict:
     if supports_vertical:
-        return {
-            "inline_keyboard": [
-                [{"text": "مربع", "callback_data": "GEN_SQUARE"}],
-                [{"text": "طولي", "callback_data": "GEN_VERTICAL"}],
-            ]
-        }
+        return {"inline_keyboard": [[{"text": "مربع", "callback_data": "GEN_SQUARE"}],
+                                    [{"text": "طولي", "callback_data": "GEN_VERTICAL"}]]}
     return {"inline_keyboard": [[{"text": "مربع", "callback_data": "GEN_SQUARE"}]]}
 
 
@@ -728,10 +683,10 @@ class Session:
     last_update_id: int = 0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     seq: int = 0
-    chosen_size: str = ""      # "SQUARE" or "VERTICAL"
-    chosen_design: int = 1     # 1..design_count
-    last_name_ar: str = ""     # last used name
-    last_gen_ts: float = 0     # rate limit only for generation
+    chosen_size: str = ""
+    chosen_design: int = 1
+    last_name_ar: str = ""
+    last_gen_ts: float = 0
     creating_msg_id: int = 0
     recent_fps: Dict[str, float] = field(default_factory=dict)
 
@@ -772,7 +727,7 @@ def bump_seq(s: Session):
 # ---------------------------
 job_queue: asyncio.Queue = asyncio.Queue()
 _inflight_lock = asyncio.Lock()
-_inflight: set = set()  # (bot_key, chat_id, seq)
+_inflight: set = set()
 
 
 @dataclass
@@ -837,10 +792,10 @@ async def process_job(job: Job):
                 log.info("Skip stale result for %s", job.chat_id)
                 return
 
-        # ✅ الصورة لحالها (بدون كابشن وبدون أزرار)
+        # ✅ Send photo alone
         tg_send_photo(bot_token, job.chat_id, png_bytes, caption="", reply_markup=None)
 
-        # ✅ بعدها رسالة نجاح + الأزرار (حتى ما تكون الأزرار على نفس البطاقة)
+        # ✅ Then success message + buttons
         if bot["lang_mode"] == "AR_EN":
             tg_send_message(bot_token, job.chat_id, ar_msg_ready(), ar_kb_after_ready())
         else:
@@ -860,7 +815,7 @@ async def process_job(job: Job):
 
 
 # ---------------------------
-# Google: generate PNG (no Drive upload)
+# Google: generate PNG
 # ---------------------------
 def export_png(pres_id: str, slide_object_id: str, creds) -> bytes:
     if not creds.valid or creds.expired:
@@ -948,7 +903,7 @@ def normalize_cmd(text: str) -> str:
 
 
 # ---------------------------
-# Template picking (generalized)
+# Template picking
 # ---------------------------
 def pick_template_id(bot: Dict[str, Any], size_key: str, design_idx_1based: int) -> str:
     design_count = int(bot.get("design_count") or 1)
@@ -979,9 +934,24 @@ def size_label_ar(size_key: str) -> str:
     return "مربع" if size_key == "SQUARE" else "طولي"
 
 
+def design_label_ar(design_idx: int) -> str:
+    return f"{design_idx}"
+
+
 # ---------------------------
-# Core handler (per bot)
+# Core handler
 # ---------------------------
+STATE_MENU = "MENU"
+STATE_WAIT_AR = "WAIT_AR"
+STATE_WAIT_EN = "WAIT_EN"
+STATE_REVIEW_NAME = "REVIEW_NAME"
+STATE_CHOOSE_SIZE = "CHOOSE_SIZE"
+STATE_CHOOSE_DESIGN = "CHOOSE_DESIGN"
+STATE_PREVIEW_AR = "PREVIEW_AR"
+STATE_CONFIRM = "CONFIRM"
+STATE_CREATING = "CREATING"
+
+
 async def handle_webhook(req: Request, bot_key: str):
     bot = BOTS[bot_key]
     bot_token = bot["token"]
@@ -1001,27 +971,16 @@ async def handle_webhook(req: Request, bot_key: str):
     text = clean_text(text_raw)
     cmd = normalize_cmd(text)
 
-    # accept callbacks as commands
     if text in (
-        "EDIT_AR",
-        "EDIT_EN",
-        "GEN",
-        "GEN_SQUARE",
-        "GEN_VERTICAL",
-        "START_CARD",
-        "START",
-        "CONFIRM_NAME",
-        "CANCEL",
-        "BACK_SIZE",
-        "BACK_DESIGN",
-        "CONFIRM_GEN",
+        "EDIT_AR", "EDIT_EN", "GEN", "GEN_SQUARE", "GEN_VERTICAL",
+        "START_CARD", "START", "CONFIRM_NAME", "CANCEL",
+        "BACK_SIZE", "BACK_DESIGN", "CONFIRM_GEN",
     ):
         cmd = text
 
     if text.startswith("DESIGN_"):
         cmd = text
 
-    # ---- Fingerprint dedupe within 60 seconds
     fp = f"{update_id}|{msg_id}|{cq_id or ''}|{cmd}|{text}"
     now = time.time()
     async with s.lock:
@@ -1046,7 +1005,7 @@ async def handle_webhook(req: Request, bot_key: str):
     async with s.lock:
         if s.state == STATE_CREATING and cmd in GEN_COMMANDS:
             if cq_id:
-                tg_toast(bot_token, cq_id, "⏳ جاري إصدار البطاقة... الرجاء الانتظار", show_alert=False)
+                tg_toast(bot_token, cq_id, "⏳ جاري توليد البطاقة... الرجاء الانتظار", show_alert=False)
             return {"ok": True}
 
         if cmd in GEN_COMMANDS:
@@ -1169,17 +1128,15 @@ async def handle_webhook(req: Request, bot_key: str):
                     _inflight.add(key)
 
                 asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, s.seq))
-                await job_queue.put(
-                    Job(
-                        bot_key=bot_key,
-                        chat_id=s.chat_id,
-                        name_ar=s.name_ar,
-                        name_en=s.name_en,
-                        template_id=pick_template_id(bot, "SQUARE", 1),
-                        requested_at=time.time(),
-                        seq=s.seq,
-                    )
-                )
+                await job_queue.put(Job(
+                    bot_key=bot_key,
+                    chat_id=s.chat_id,
+                    name_ar=s.name_ar,
+                    name_en=s.name_en,
+                    template_id=pick_template_id(bot, "SQUARE", 1),
+                    requested_at=time.time(),
+                    seq=s.seq,
+                ))
                 return {"ok": True}
 
             tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
@@ -1194,12 +1151,8 @@ async def handle_webhook(req: Request, bot_key: str):
                 else:
                     s.chosen_design = 1
                     s.state = STATE_PREVIEW_AR
-                    tg_send_message(
-                        bot_token,
-                        s.chat_id,
-                        hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
-                        kb_preview_ar(supports_vertical, design_count),
-                    )
+                    tg_send_message(bot_token, s.chat_id, hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
+                                    kb_preview_ar(supports_vertical, design_count))
                 return {"ok": True}
 
             if cmd == "GEN_VERTICAL" and supports_vertical:
@@ -1210,12 +1163,8 @@ async def handle_webhook(req: Request, bot_key: str):
                 else:
                     s.chosen_design = 1
                     s.state = STATE_PREVIEW_AR
-                    tg_send_message(
-                        bot_token,
-                        s.chat_id,
-                        hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
-                        kb_preview_ar(supports_vertical, design_count),
-                    )
+                    tg_send_message(bot_token, s.chat_id, hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
+                                    kb_preview_ar(supports_vertical, design_count))
                 return {"ok": True}
 
             tg_send_message(bot_token, s.chat_id, hz_msg_choose_size(supports_vertical), hz_kb_choose_size(supports_vertical))
@@ -1232,12 +1181,8 @@ async def handle_webhook(req: Request, bot_key: str):
                     s.chosen_design = max(1, min(design_count, idx))
 
                     s.state = STATE_PREVIEW_AR
-                    tg_send_message(
-                        bot_token,
-                        s.chat_id,
-                        hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
-                        kb_preview_ar(supports_vertical, design_count),
-                    )
+                    tg_send_message(bot_token, s.chat_id, hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
+                                    kb_preview_ar(supports_vertical, design_count))
                     return {"ok": True}
 
             if not s.chosen_size:
@@ -1281,27 +1226,21 @@ async def handle_webhook(req: Request, bot_key: str):
                 asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, s.seq))
 
                 template_id = pick_template_id(bot, s.chosen_size or "SQUARE", s.chosen_design or 1)
-                await job_queue.put(
-                    Job(
-                        bot_key=bot_key,
-                        chat_id=s.chat_id,
-                        name_ar=s.name_ar,
-                        name_en="",
-                        template_id=template_id,
-                        requested_at=time.time(),
-                        seq=s.seq,
-                    )
-                )
+                await job_queue.put(Job(
+                    bot_key=bot_key,
+                    chat_id=s.chat_id,
+                    name_ar=s.name_ar,
+                    name_en="",
+                    template_id=template_id,
+                    requested_at=time.time(),
+                    seq=s.seq,
+                ))
                 return {"ok": True}
 
             if not s.chosen_size:
                 s.chosen_size = "SQUARE"
-            tg_send_message(
-                bot_token,
-                s.chat_id,
-                hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
-                kb_preview_ar(supports_vertical, design_count),
-            )
+            tg_send_message(bot_token, s.chat_id, hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
+                            kb_preview_ar(supports_vertical, design_count))
             return {"ok": True}
 
         if s.state == STATE_CREATING:
@@ -1315,20 +1254,15 @@ async def handle_webhook(req: Request, bot_key: str):
 
 
 # ---------------------------
-# Routes
+# Startup + Routes
 # ---------------------------
 @app.on_event("startup")
 async def startup():
     require_env()
     for i in range(max(1, WORKER_COUNT)):
         asyncio.create_task(worker_loop(i + 1))
-    log.info(
-        "App started (workers=%s, max_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss)",
-        WORKER_COUNT,
-        MAX_QUEUE_SIZE,
-        RATE_LIMIT_SECONDS,
-        FP_DEDUP_SECONDS,
-    )
+    log.info("App started (workers=%s, max_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss)",
+             WORKER_COUNT, MAX_QUEUE_SIZE, RATE_LIMIT_SECONDS, FP_DEDUP_SECONDS)
 
 
 @app.get("/")
