@@ -615,13 +615,23 @@ def hz_msg_choose_size(supports_vertical: bool) -> str:
 
 
 def hz_msg_choose_design(design_count: int) -> str:
+    # CHANGED: wording
     if design_count <= 1:
         return "التصميم الافتراضي"
-    return "اختر التصميم"
+    return "اختر رقم التصميم"
 
 
-def hz_msg_preview(name_ar: str, size_label: str, design_label: str) -> str:
-    return f"ملخص الطلب قبل الإصدار:\n\nالاسم: {name_ar}\nالمقاس: {size_label}\nالتصميم: {design_label}\n\nهل تريد التأكيد؟"
+def hz_msg_preview(name_ar: str, size_label: str, design_number: int) -> str:
+    # CHANGED:
+    # - "ملخص البطاقة قبل الإصدار" بدل "ملخص الطلب قبل الإصدار"
+    # - "رقم التصميم: 1" بدل "التصميم: التصميم 1"
+    return (
+        "ملخص البطاقة قبل الإصدار:\n\n"
+        f"الاسم: {name_ar}\n"
+        f"المقاس: {size_label}\n"
+        f"رقم التصميم: {design_number}\n\n"
+        "هل تريد التأكيد؟"
+    )
 
 
 def hz_msg_creating() -> str:
@@ -646,7 +656,8 @@ def hz_kb_start_card() -> dict:
 
 
 def hz_kb_start_again() -> dict:
-    return {"inline_keyboard": [[{"text": "البداية", "callback_data": "START"}]]}
+    # CHANGED: add ↩️ emoji
+    return {"inline_keyboard": [[{"text": "↩️ البداية", "callback_data": "START"}]]}
 
 
 def hz_kb_review_name() -> dict:
@@ -672,11 +683,13 @@ def hz_kb_choose_size(supports_vertical: bool) -> dict:
 
 
 def kb_choose_design(size_key: str, design_count: int) -> dict:
-    # removed edit name / change size / cancel
+    # CHANGED:
+    # - message says "اختر رقم التصميم"
+    # - answers are 1 / 2 / 3 (not "تصميم 1")
     s_prefix = "S" if size_key == "SQUARE" else "V"
     rows = []
     for i in range(1, max(1, design_count) + 1):
-        rows.append([{"text": f"تصميم {i}", "callback_data": f"DESIGN_{s_prefix}_{i}"}])
+        rows.append([{"text": f"{i}", "callback_data": f"DESIGN_{s_prefix}_{i}"}])
     return {"inline_keyboard": rows}
 
 
@@ -689,14 +702,15 @@ def kb_preview_ar(supports_vertical: bool, design_count: int) -> dict:
     if supports_vertical:
         rows.append([{"text": "تغيير المقاس", "callback_data": "BACK_SIZE"}])
     if design_count > 1:
-        rows.append([{"text": "تغيير التصميم", "callback_data": "BACK_DESIGN"}])
+        rows.append([{"text": "تغيير رقم التصميم", "callback_data": "BACK_DESIGN"}])  # CHANGED wording
 
     rows.append([{"text": "❌ إلغاء العملية", "callback_data": "CANCEL"}])
     return {"inline_keyboard": rows}
 
 
 def hz_kb_after_ready() -> dict:
-    return {"inline_keyboard": [[{"text": "البداية", "callback_data": "START"}]]}
+    # CHANGED: ↩️ emoji
+    return {"inline_keyboard": [[{"text": "↩️ البداية", "callback_data": "START"}]]}
 
 
 # ---------------------------
@@ -972,8 +986,9 @@ def size_label_ar(size_key: str) -> str:
     return "مربع" if size_key == "SQUARE" else "طولي"
 
 
+# NOTE: kept for compatibility; now we show number directly in preview
 def design_label_ar(design_idx: int) -> str:
-    return f"تصميم {design_idx}"
+    return f"{design_idx}"
 
 
 # ---------------------------
@@ -1205,7 +1220,7 @@ async def handle_webhook(req: Request, bot_key: str):
                     tg_send_message(
                         bot_token,
                         s.chat_id,
-                        hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), design_label_ar(s.chosen_design)),
+                        hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
                         kb_preview_ar(supports_vertical, design_count),
                     )
                 return {"ok": True}
@@ -1221,12 +1236,11 @@ async def handle_webhook(req: Request, bot_key: str):
                     tg_send_message(
                         bot_token,
                         s.chat_id,
-                        hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), design_label_ar(s.chosen_design)),
+                        hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
                         kb_preview_ar(supports_vertical, design_count),
                     )
                 return {"ok": True}
 
-            # allow editing from here? you asked to remove extra buttons; user can /start to restart
             tg_send_message(bot_token, s.chat_id, hz_msg_choose_size(supports_vertical), hz_kb_choose_size(supports_vertical))
             return {"ok": True}
 
@@ -1245,7 +1259,7 @@ async def handle_webhook(req: Request, bot_key: str):
                     tg_send_message(
                         bot_token,
                         s.chat_id,
-                        hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), design_label_ar(s.chosen_design)),
+                        hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
                         kb_preview_ar(supports_vertical, design_count),
                     )
                     return {"ok": True}
@@ -1312,7 +1326,7 @@ async def handle_webhook(req: Request, bot_key: str):
             tg_send_message(
                 bot_token,
                 s.chat_id,
-                hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), design_label_ar(s.chosen_design)),
+                hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
                 kb_preview_ar(supports_vertical, design_count),
             )
             return {"ok": True}
