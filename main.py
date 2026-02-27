@@ -197,16 +197,20 @@ def request_with_retry(method: str, url: str, *, timeout: int, **kwargs) -> requ
             if r.status_code == 200:
                 return r
             if _is_retryable_status(r.status_code):
-                log.warning("Retryable HTTP %s on %s (attempt %s/%s): %s",
-                            r.status_code, url, attempt, RETRY_MAX_ATTEMPTS, r.text[:300])
+                log.warning(
+                    "Retryable HTTP %s on %s (attempt %s/%s): %s",
+                    r.status_code, url, attempt, RETRY_MAX_ATTEMPTS, r.text[:300]
+                )
                 if attempt < RETRY_MAX_ATTEMPTS:
                     _sleep_backoff(attempt)
                     continue
             return r
         except (requests.Timeout, requests.ConnectionError, requests.RequestException) as e:
             last_exc = e
-            log.warning("Network error on %s %s (attempt %s/%s): %s",
-                        method, url, attempt, RETRY_MAX_ATTEMPTS, repr(e))
+            log.warning(
+                "Network error on %s %s (attempt %s/%s): %s",
+                method, url, attempt, RETRY_MAX_ATTEMPTS, repr(e)
+            )
             if attempt < RETRY_MAX_ATTEMPTS:
                 _sleep_backoff(attempt)
                 continue
@@ -229,16 +233,20 @@ def google_execute_with_retry(fn, *, label: str = "google_call"):
             except Exception:
                 pass
             if status and _is_retryable_status(status) and attempt < RETRY_MAX_ATTEMPTS:
-                log.warning("Retryable Google HttpError %s (%s) attempt %s/%s",
-                            status, label, attempt, RETRY_MAX_ATTEMPTS)
+                log.warning(
+                    "Retryable Google HttpError %s (%s) attempt %s/%s",
+                    status, label, attempt, RETRY_MAX_ATTEMPTS
+                )
                 _sleep_backoff(attempt)
                 continue
             raise
         except Exception as e:
             last_exc = e
             if attempt < RETRY_MAX_ATTEMPTS and isinstance(e, (TimeoutError, ConnectionError)):
-                log.warning("Retryable Google error (%s) attempt %s/%s: %s",
-                            label, attempt, RETRY_MAX_ATTEMPTS, repr(e))
+                log.warning(
+                    "Retryable Google error (%s) attempt %s/%s: %s",
+                    label, attempt, RETRY_MAX_ATTEMPTS, repr(e)
+                )
                 _sleep_backoff(attempt)
                 continue
             raise
@@ -284,14 +292,24 @@ def tg_answer_callback(bot_token: str, callback_query_id: str) -> None:
 
 def tg_toast(bot_token: str, callback_query_id: str, text: str, show_alert: bool = False) -> None:
     if callback_query_id:
-        tg(bot_token, "answerCallbackQuery", {
-            "callback_query_id": callback_query_id,
-            "text": text,
-            "show_alert": "true" if show_alert else "false",
-        })
+        tg(
+            bot_token,
+            "answerCallbackQuery",
+            {
+                "callback_query_id": callback_query_id,
+                "text": text,
+                "show_alert": "true" if show_alert else "false",
+            },
+        )
 
 
-def tg_send_photo(bot_token: str, chat_id: str, png_bytes: bytes, caption: str = "", reply_markup: Optional[dict] = None) -> None:
+def tg_send_photo(
+    bot_token: str,
+    chat_id: str,
+    png_bytes: bytes,
+    caption: str = "",
+    reply_markup: Optional[dict] = None
+) -> None:
     files = {"photo": ("card.png", png_bytes)}
     data = {"chat_id": chat_id}
     if caption:
@@ -327,10 +345,18 @@ def require_env():
             if supports_vertical and not (isinstance(tv, str) and tv.strip()):
                 raise RuntimeError(f"{bot_key}: template_vertical is missing (supports_vertical=true)")
         else:
-            if not (isinstance(tsq, list) and len(tsq) >= design_count and all(str(x).strip() for x in tsq[:design_count])):
+            if not (
+                isinstance(tsq, list)
+                and len(tsq) >= design_count
+                and all(str(x).strip() for x in tsq[:design_count])
+            ):
                 raise RuntimeError(f"{bot_key}: template_square list is missing/invalid for design_count={design_count}")
             if supports_vertical:
-                if not (isinstance(tv, list) and len(tv) >= design_count and all(str(x).strip() for x in tv[:design_count])):
+                if not (
+                    isinstance(tv, list)
+                    and len(tv) >= design_count
+                    and all(str(x).strip() for x in tv[:design_count])
+                ):
                     raise RuntimeError(f"{bot_key}: template_vertical list is missing/invalid for design_count={design_count}")
 
     if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN) and not SERVICE_ACCOUNT_JSON:
@@ -411,7 +437,6 @@ def validate_en(name: str) -> Tuple[bool, str]:
 # ---------------------------
 # Messages / Keyboards
 # ---------------------------
-# CHANGED: spacing around divider
 DIV = "\n\n--------------------\n\n"
 
 
@@ -475,7 +500,6 @@ def ar_msg_welcome(bot_key: str) -> str:
     br = get_branding(bot_key)
     ar = br.get("welcome_ar", "مرحباً بك")
     en = br.get("welcome_en", "Welcome")
-    # DIV already has blank lines around it
     return ar + DIV + en
 
 
@@ -500,8 +524,9 @@ def ar_msg_invalid_en(reason_ar: str) -> str:
 
 
 def ar_msg_confirm(name_ar: str, name_en: str) -> str:
-    ar = f"تأكيد البيانات:\n\nالاسم بالعربية: {name_ar}\nالاسم بالإنجليزية: {name_en}\n\n"
-    en = f"Confirm details:\n\nArabic: {name_ar}\nEnglish: {name_en}\n\n"
+    # FIX: avoid extra blank lines before DIV (was ending with \n\n + DIV => looks like 2 blank lines)
+    ar = f"تأكيد البيانات:\n\nالاسم بالعربية: {name_ar}\nالاسم بالإنجليزية: {name_en}"
+    en = f"Confirm details:\n\nArabic: {name_ar}\nEnglish: {name_en}"
     return ar + DIV + en
 
 
@@ -522,7 +547,6 @@ def ar_msg_error(err: str) -> str:
 
 
 def ar_kb_start_card() -> dict:
-    # CHANGED back to Generate wording
     return {"inline_keyboard": [[{"text": "إصدار بطاقة تهنئة / Generate Card", "callback_data": "START_CARD"}]]}
 
 
@@ -535,7 +559,6 @@ def ar_kb_wait_en() -> dict:
 
 
 def ar_kb_confirm() -> dict:
-    # CHANGED back to Generate wording
     return {
         "inline_keyboard": [
             [{"text": "توليد البطاقة / Generate", "callback_data": "GEN"}],
@@ -549,7 +572,6 @@ def ar_kb_confirm() -> dict:
 
 
 def ar_kb_after_ready() -> dict:
-    # CHANGED back to Generate wording
     return {
         "inline_keyboard": [
             [{"text": "إصدار بطاقة أخرى / Generate Another Card", "callback_data": "START_CARD"}],
@@ -588,18 +610,22 @@ def hz_msg_choose_design(design_count: int) -> str:
     return "اختر رقم التصميم" if design_count > 1 else "التصميم الافتراضي"
 
 
-def hz_msg_preview(name_ar: str, size_label: str, design_number: int) -> str:
-    return (
+def hz_msg_preview(bot_key: str, name_ar: str, size_label: str, design_number: int) -> str:
+    # CHANGE: remove design number from preview for all Arabic bots except "amro"
+    base = (
         "ملخص البطاقة قبل الإصدار:\n\n"
         f"الاسم: {name_ar}\n"
         f"المقاس: {size_label}\n"
-        f"رقم التصميم: {design_number}\n\n"
-        "هل تريد التأكيد؟"
     )
+    if bot_key == "amro":
+        base += f"رقم التصميم: {design_number}\n"
+    base += "\nهل تريد التأكيد؟"
+    return base
 
 
 def hz_msg_creating() -> str:
-    return "جاري توليد البطاقة..."
+    # CHANGE: "جاري توليد البطاقة" -> "جاري إنشاء البطاقة"
+    return "جاري إنشاء البطاقة..."
 
 
 def hz_msg_still_working() -> str:
@@ -623,14 +649,22 @@ def hz_kb_start_again() -> dict:
 
 
 def hz_kb_review_name() -> dict:
-    return {"inline_keyboard": [[{"text": "تأكيد الاسم", "callback_data": "CONFIRM_NAME"}],
-                                [{"text": "تعديل الاسم", "callback_data": "EDIT_AR"}]]}
+    return {
+        "inline_keyboard": [
+            [{"text": "تأكيد الاسم", "callback_data": "CONFIRM_NAME"}],
+            [{"text": "تعديل الاسم", "callback_data": "EDIT_AR"}],
+        ]
+    }
 
 
 def hz_kb_choose_size(supports_vertical: bool) -> dict:
     if supports_vertical:
-        return {"inline_keyboard": [[{"text": "مربع", "callback_data": "GEN_SQUARE"}],
-                                    [{"text": "طولي", "callback_data": "GEN_VERTICAL"}]]}
+        return {
+            "inline_keyboard": [
+                [{"text": "مربع", "callback_data": "GEN_SQUARE"}],
+                [{"text": "طولي", "callback_data": "GEN_VERTICAL"}],
+            ]
+        }
     return {"inline_keyboard": [[{"text": "مربع", "callback_data": "GEN_SQUARE"}]]}
 
 
@@ -833,11 +867,13 @@ def generate_card_png(template_id: str, name_ar: str, name_en: str, lang_mode: s
     pres_id = None
     try:
         copied = google_execute_with_retry(
-            lambda: drive.files().copy(
+            lambda: drive.files()
+            .copy(
                 fileId=template_id,
                 body={"name": f"tg_card_{int(time.time())}"},
                 supportsAllDrives=True,
-            ).execute(),
+            )
+            .execute(),
             label="drive.files.copy",
         )
         pres_id = copied["id"]
@@ -847,10 +883,12 @@ def generate_card_png(template_id: str, name_ar: str, name_en: str, lang_mode: s
             reqs.append({"replaceAllText": {"containsText": {"text": PLACEHOLDER_EN}, "replaceText": name_en}})
 
         google_execute_with_retry(
-            lambda: slides.presentations().batchUpdate(
+            lambda: slides.presentations()
+            .batchUpdate(
                 presentationId=pres_id,
                 body={"requests": reqs},
-            ).execute(),
+            )
+            .execute(),
             label="slides.presentations.batchUpdate",
         )
 
@@ -1096,7 +1134,12 @@ async def handle_webhook(req: Request, bot_key: str):
 
             if cmd == "CONFIRM_NAME":
                 s.state = STATE_CHOOSE_SIZE
-                tg_send_message(bot_token, s.chat_id, hz_msg_choose_size(supports_vertical), hz_kb_choose_size(supports_vertical))
+                tg_send_message(
+                    bot_token,
+                    s.chat_id,
+                    hz_msg_choose_size(supports_vertical),
+                    hz_kb_choose_size(supports_vertical),
+                )
                 return {"ok": True}
 
             tg_send_message(bot_token, s.chat_id, hz_msg_review_name(s.name_ar), hz_kb_review_name())
@@ -1128,15 +1171,17 @@ async def handle_webhook(req: Request, bot_key: str):
                     _inflight.add(key)
 
                 asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, s.seq))
-                await job_queue.put(Job(
-                    bot_key=bot_key,
-                    chat_id=s.chat_id,
-                    name_ar=s.name_ar,
-                    name_en=s.name_en,
-                    template_id=pick_template_id(bot, "SQUARE", 1),
-                    requested_at=time.time(),
-                    seq=s.seq,
-                ))
+                await job_queue.put(
+                    Job(
+                        bot_key=bot_key,
+                        chat_id=s.chat_id,
+                        name_ar=s.name_ar,
+                        name_en=s.name_en,
+                        template_id=pick_template_id(bot, "SQUARE", 1),
+                        requested_at=time.time(),
+                        seq=s.seq,
+                    )
+                )
                 return {"ok": True}
 
             tg_send_message(bot_token, s.chat_id, ar_msg_confirm(s.name_ar, s.name_en), ar_kb_confirm())
@@ -1147,24 +1192,42 @@ async def handle_webhook(req: Request, bot_key: str):
                 s.chosen_size = "SQUARE"
                 if design_count > 1:
                     s.state = STATE_CHOOSE_DESIGN
-                    tg_send_message(bot_token, s.chat_id, hz_msg_choose_design(design_count), kb_choose_design("SQUARE", design_count))
+                    tg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        hz_msg_choose_design(design_count),
+                        kb_choose_design("SQUARE", design_count),
+                    )
                 else:
                     s.chosen_design = 1
                     s.state = STATE_PREVIEW_AR
-                    tg_send_message(bot_token, s.chat_id, hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
-                                    kb_preview_ar(supports_vertical, design_count))
+                    tg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        hz_msg_preview(bot_key, s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
+                        kb_preview_ar(supports_vertical, design_count),
+                    )
                 return {"ok": True}
 
             if cmd == "GEN_VERTICAL" and supports_vertical:
                 s.chosen_size = "VERTICAL"
                 if design_count > 1:
                     s.state = STATE_CHOOSE_DESIGN
-                    tg_send_message(bot_token, s.chat_id, hz_msg_choose_design(design_count), kb_choose_design("VERTICAL", design_count))
+                    tg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        hz_msg_choose_design(design_count),
+                        kb_choose_design("VERTICAL", design_count),
+                    )
                 else:
                     s.chosen_design = 1
                     s.state = STATE_PREVIEW_AR
-                    tg_send_message(bot_token, s.chat_id, hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
-                                    kb_preview_ar(supports_vertical, design_count))
+                    tg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        hz_msg_preview(bot_key, s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
+                        kb_preview_ar(supports_vertical, design_count),
+                    )
                 return {"ok": True}
 
             tg_send_message(bot_token, s.chat_id, hz_msg_choose_size(supports_vertical), hz_kb_choose_size(supports_vertical))
@@ -1181,8 +1244,12 @@ async def handle_webhook(req: Request, bot_key: str):
                     s.chosen_design = max(1, min(design_count, idx))
 
                     s.state = STATE_PREVIEW_AR
-                    tg_send_message(bot_token, s.chat_id, hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
-                                    kb_preview_ar(supports_vertical, design_count))
+                    tg_send_message(
+                        bot_token,
+                        s.chat_id,
+                        hz_msg_preview(bot_key, s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
+                        kb_preview_ar(supports_vertical, design_count),
+                    )
                     return {"ok": True}
 
             if not s.chosen_size:
@@ -1226,21 +1293,27 @@ async def handle_webhook(req: Request, bot_key: str):
                 asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, s.seq))
 
                 template_id = pick_template_id(bot, s.chosen_size or "SQUARE", s.chosen_design or 1)
-                await job_queue.put(Job(
-                    bot_key=bot_key,
-                    chat_id=s.chat_id,
-                    name_ar=s.name_ar,
-                    name_en="",
-                    template_id=template_id,
-                    requested_at=time.time(),
-                    seq=s.seq,
-                ))
+                await job_queue.put(
+                    Job(
+                        bot_key=bot_key,
+                        chat_id=s.chat_id,
+                        name_ar=s.name_ar,
+                        name_en="",
+                        template_id=template_id,
+                        requested_at=time.time(),
+                        seq=s.seq,
+                    )
+                )
                 return {"ok": True}
 
             if not s.chosen_size:
                 s.chosen_size = "SQUARE"
-            tg_send_message(bot_token, s.chat_id, hz_msg_preview(s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
-                            kb_preview_ar(supports_vertical, design_count))
+            tg_send_message(
+                bot_token,
+                s.chat_id,
+                hz_msg_preview(bot_key, s.name_ar, size_label_ar(s.chosen_size), s.chosen_design),
+                kb_preview_ar(supports_vertical, design_count),
+            )
             return {"ok": True}
 
         if s.state == STATE_CREATING:
@@ -1261,8 +1334,13 @@ async def startup():
     require_env()
     for i in range(max(1, WORKER_COUNT)):
         asyncio.create_task(worker_loop(i + 1))
-    log.info("App started (workers=%s, max_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss)",
-             WORKER_COUNT, MAX_QUEUE_SIZE, RATE_LIMIT_SECONDS, FP_DEDUP_SECONDS)
+    log.info(
+        "App started (workers=%s, max_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss)",
+        WORKER_COUNT,
+        MAX_QUEUE_SIZE,
+        RATE_LIMIT_SECONDS,
+        FP_DEDUP_SECONDS,
+    )
 
 
 @app.get("/")
