@@ -7,6 +7,7 @@ import logging
 import random
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, Tuple, List, Union
+from datetime import datetime, timezone, timedelta
 
 import requests
 from fastapi import FastAPI, Request
@@ -61,6 +62,12 @@ SCOPES = [
 
 PLACEHOLDER_AR = os.getenv("PLACEHOLDER_AR", "<<Name in Arabic>>")
 PLACEHOLDER_EN = os.getenv("PLACEHOLDER_EN", "<<Name in English>>")
+
+# ---------------------------
+# Google Sheet tracking
+# ---------------------------
+SHEET_ID = os.getenv("SHEET_ID", "").strip()
+SHEET_TAB = os.getenv("SHEET_TAB", "Tracking").strip()
 
 # ---------------------------
 # Env (Bots)
@@ -256,6 +263,40 @@ def google_execute_with_retry(fn, *, label: str = "google_call"):
     raise RuntimeError("google_execute_with_retry failed unexpectedly")
 
 
+def now_ts_riyadh() -> str:
+    tz = timezone(timedelta(hours=3))
+    return datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def safe_sheet_append_row(values: List[str]) -> None:
+    """Never break the bot if sheet write fails."""
+    try:
+        sheet_append_row(values)
+    except Exception as e:
+        log.warning("Sheet append failed: %s", repr(e))
+
+
+def sheet_append_row(values: List[str]) -> None:
+    if not SHEET_ID:
+        return
+    drive, slides, sheets, creds = build_clients()
+    rng = f"{SHEET_TAB}!A1"
+    body = {"values": [values]}
+    google_execute_with_retry(
+        lambda: sheets.spreadsheets()
+        .values()
+        .append(
+            spreadsheetId=SHEET_ID,
+            range=rng,
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body=body,
+        )
+        .execute(),
+        label="sheets.values.append",
+    )
+
+
 # ---------------------------
 # Telegram helpers
 # ---------------------------
@@ -325,6 +366,7 @@ def tg_send_photo(
 # ---------------------------
 _drive = None
 _slides = None
+_sheets = None
 _creds = None
 
 
@@ -365,14 +407,14 @@ def require_env():
 
 
 def build_clients():
-    global _drive, _slides, _creds
-    if _drive and _slides and _creds:
+    global _drive, _slides, _sheets, _creds
+    if _drive and _slides and _sheets and _creds:
         try:
             if not _creds.valid or _creds.expired:
                 _creds.refresh(GARequest())
         except Exception:
             pass
-        return _drive, _slides, _creds
+        return _drive, _slides, _sheets, _creds
 
     if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN:
         creds = Credentials(
@@ -386,17 +428,19 @@ def build_clients():
         creds.refresh(GARequest())
         drive = build("drive", "v3", credentials=creds, cache_discovery=False)
         slides = build("slides", "v1", credentials=creds, cache_discovery=False)
-        _drive, _slides, _creds = drive, slides, creds
+        sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        _drive, _slides, _sheets, _creds = drive, slides, sheets, creds
         log.info("Using OAuth user credentials")
-        return drive, slides, creds
+        return drive, slides, sheets, creds
 
     info = json.loads(SERVICE_ACCOUNT_JSON)
     creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     drive = build("drive", "v3", credentials=creds, cache_discovery=False)
     slides = build("slides", "v1", credentials=creds, cache_discovery=False)
-    _drive, _slides, _creds = drive, slides, creds
+    sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
+    _drive, _slides, _sheets, _creds = drive, slides, sheets, creds
     log.info("Using Service Account credentials")
-    return drive, slides, creds
+    return drive, slides, sheets, creds
 
 
 # ---------------------------
@@ -525,7 +569,6 @@ def ar_msg_invalid_en(reason_ar: str) -> str:
 
 
 def ar_msg_confirm(name_ar: str, name_en: str) -> str:
-    # FIX: avoid extra blank lines before DIV (was ending with \n\n + DIV => looks like 2 blank lines)
     ar = f"تأكيد البيانات:\n\nالاسم بالعربية: {name_ar}\nالاسم بالإنجليزية: {name_en}"
     en = f"Confirm details:\n\nArabic: {name_ar}\nEnglish: {name_en}"
     return ar + DIV + en
@@ -612,7 +655,6 @@ def hz_msg_choose_design(design_count: int) -> str:
 
 
 def hz_msg_preview(bot_key: str, name_ar: str, size_label: str, design_number: int) -> str:
-    # CHANGE: remove design number from preview for all Arabic bots except "amro"
     base = (
         "ملخص البطاقة قبل الإصدار:\n\n"
         f"الاسم: {name_ar}\n"
@@ -625,7 +667,6 @@ def hz_msg_preview(bot_key: str, name_ar: str, size_label: str, design_number: i
 
 
 def hz_msg_creating() -> str:
-    # CHANGE: "جاري توليد البطاقة" -> "جاري إنشاء البطاقة"
     return "جاري إنشاء البطاقة..."
 
 
@@ -725,6 +766,10 @@ class Session:
     creating_msg_id: int = 0
     recent_fps: Dict[str, float] = field(default_factory=dict)
 
+    # tracking
+    user_id: str = ""
+    username: str = ""
+
 
 sessions: Dict[str, Session] = {}
 
@@ -769,8 +814,12 @@ _inflight: set = set()
 class Job:
     bot_key: str
     chat_id: str
+    user_id: str
+    username: str
     name_ar: str
     name_en: str
+    size_key: str
+    design_number: int
     template_id: str
     requested_at: float
     seq: int
@@ -802,6 +851,10 @@ async def _progress_ping(bot_token: str, bot_key: str, chat_id: str, seq: int):
         tg_send_message(bot_token, chat_id, ar_msg_still_working())
     else:
         tg_send_message(bot_token, chat_id, hz_msg_still_working())
+
+
+def size_label_ar(size_key: str) -> str:
+    return "مربع" if size_key == "SQUARE" else "طولي"
 
 
 async def process_job(job: Job):
@@ -836,6 +889,21 @@ async def process_job(job: Job):
         else:
             tg_send_message(bot_token, job.chat_id, hz_msg_ready(), hz_kb_after_ready())
 
+        # ✅ Log to Sheet (SUCCESS)
+        safe_sheet_append_row([
+            now_ts_riyadh(),                # Timestamp
+            job.bot_key,                    # Bot
+            "SUCCESS",                      # Status
+            job.name_ar or "",              # Ar Name
+            job.name_en or "",              # En Name
+            job.chat_id or "",              # Chat ID
+            job.user_id or "",              # User ID
+            job.username or "",             # Username
+            size_label_ar(job.size_key),    # Size
+            str(job.design_number or 1),    # Design
+            "",                             # Error
+        ])
+
         async with s.lock:
             s.last_name_ar = job.name_ar or s.last_name_ar
             reset_session(s, keep_last_name=True)
@@ -845,6 +913,22 @@ async def process_job(job: Job):
             tg_send_message(bot_token, job.chat_id, ar_msg_error(str(e)), ar_kb_start_again())
         else:
             tg_send_message(bot_token, job.chat_id, hz_msg_error(str(e)), hz_kb_start_again())
+
+        # ✅ Log to Sheet (ERROR)
+        safe_sheet_append_row([
+            now_ts_riyadh(),
+            job.bot_key,
+            "ERROR",
+            job.name_ar or "",
+            job.name_en or "",
+            job.chat_id or "",
+            job.user_id or "",
+            job.username or "",
+            size_label_ar(job.size_key),
+            str(job.design_number or 1),
+            str(e)[:400],
+        ])
+
         async with s.lock:
             reset_session(s, keep_last_name=True)
 
@@ -864,7 +948,7 @@ def export_png(pres_id: str, slide_object_id: str, creds) -> bytes:
 
 
 def generate_card_png(template_id: str, name_ar: str, name_en: str, lang_mode: str) -> bytes:
-    drive, slides, creds = build_clients()
+    drive, slides, sheets, creds = build_clients()
     pres_id = None
     try:
         copied = google_execute_with_retry(
@@ -915,23 +999,31 @@ def generate_card_png(template_id: str, name_ar: str, name_en: str, lang_mode: s
 # ---------------------------
 # Update parsing
 # ---------------------------
-def extract_update(data: Dict[str, Any]) -> Tuple[int, Optional[str], Optional[str], Optional[int], Optional[str]]:
+def extract_update(data: Dict[str, Any]) -> Tuple[int, Optional[str], Optional[str], Optional[int], Optional[str], Optional[str], Optional[str]]:
     update_id = int(data.get("update_id") or 0)
 
     if "callback_query" in data:
         cq = data["callback_query"]
         cq_id = str(cq.get("id") or "")
+        frm = cq.get("from") or {}
+        user_id = str(frm.get("id") or "")
+        username = str(frm.get("username") or "")
+
         msg = cq.get("message") or {}
         chat_id = str((msg.get("chat") or {}).get("id") or "")
         message_id = int(msg.get("message_id") or 0)
         text = str(cq.get("data") or "")
-        return update_id, chat_id, text, message_id, cq_id
+        return update_id, chat_id, text, message_id, cq_id, user_id, username
 
     msg = data.get("message") or {}
+    frm = msg.get("from") or {}
+    user_id = str(frm.get("id") or "")
+    username = str(frm.get("username") or "")
+
     chat_id = str((msg.get("chat") or {}).get("id") or "")
     message_id = int(msg.get("message_id") or 0)
     text = str(msg.get("text") or "")
-    return update_id, chat_id, text, message_id, None
+    return update_id, chat_id, text, message_id, None, user_id, username
 
 
 def normalize_cmd(text: str) -> str:
@@ -969,28 +1061,9 @@ def pick_template_id(bot: Dict[str, Any], size_key: str, design_idx_1based: int)
     return tid
 
 
-def size_label_ar(size_key: str) -> str:
-    return "مربع" if size_key == "SQUARE" else "طولي"
-
-
-def design_label_ar(design_idx: int) -> str:
-    return f"{design_idx}"
-
-
 # ---------------------------
 # Core handler
 # ---------------------------
-STATE_MENU = "MENU"
-STATE_WAIT_AR = "WAIT_AR"
-STATE_WAIT_EN = "WAIT_EN"
-STATE_REVIEW_NAME = "REVIEW_NAME"
-STATE_CHOOSE_SIZE = "CHOOSE_SIZE"
-STATE_CHOOSE_DESIGN = "CHOOSE_DESIGN"
-STATE_PREVIEW_AR = "PREVIEW_AR"
-STATE_CONFIRM = "CONFIRM"
-STATE_CREATING = "CREATING"
-
-
 async def handle_webhook(req: Request, bot_key: str):
     bot = BOTS[bot_key]
     bot_token = bot["token"]
@@ -1000,12 +1073,19 @@ async def handle_webhook(req: Request, bot_key: str):
     design_count = int(bot.get("design_count") or 1)
 
     data = await req.json()
-    update_id, chat_id, text_raw, msg_id, cq_id = extract_update(data)
+    update_id, chat_id, text_raw, msg_id, cq_id, user_id, username = extract_update(data)
 
     if not chat_id:
         return {"ok": True}
 
     s = get_session(bot_key, chat_id)
+
+    # store user info for tracking
+    async with s.lock:
+        if user_id:
+            s.user_id = user_id
+        if username:
+            s.username = username
 
     text = clean_text(text_raw)
     cmd = normalize_cmd(text)
@@ -1172,12 +1252,18 @@ async def handle_webhook(req: Request, bot_key: str):
                     _inflight.add(key)
 
                 asyncio.create_task(_progress_ping(bot_token, bot_key, s.chat_id, s.seq))
+
+                # AR_EN always SQUARE and design 1
                 await job_queue.put(
                     Job(
                         bot_key=bot_key,
                         chat_id=s.chat_id,
+                        user_id=s.user_id,
+                        username=s.username,
                         name_ar=s.name_ar,
                         name_en=s.name_en,
+                        size_key="SQUARE",
+                        design_number=1,
                         template_id=pick_template_id(bot, "SQUARE", 1),
                         requested_at=time.time(),
                         seq=s.seq,
@@ -1298,8 +1384,12 @@ async def handle_webhook(req: Request, bot_key: str):
                     Job(
                         bot_key=bot_key,
                         chat_id=s.chat_id,
+                        user_id=s.user_id,
+                        username=s.username,
                         name_ar=s.name_ar,
                         name_en="",
+                        size_key=s.chosen_size or "SQUARE",
+                        design_number=int(s.chosen_design or 1),
                         template_id=template_id,
                         requested_at=time.time(),
                         seq=s.seq,
@@ -1336,11 +1426,13 @@ async def startup():
     for i in range(max(1, WORKER_COUNT)):
         asyncio.create_task(worker_loop(i + 1))
     log.info(
-        "App started (workers=%s, max_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss)",
+        "App started (workers=%s, max_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss, sheet=%s/%s)",
         WORKER_COUNT,
         MAX_QUEUE_SIZE,
         RATE_LIMIT_SECONDS,
         FP_DEDUP_SECONDS,
+        "on" if SHEET_ID else "off",
+        SHEET_TAB,
     )
 
 
