@@ -1177,26 +1177,28 @@ async def handle_webhook(req: Request, bot_key: str):
 
     # ---------------------------
     # TEMP: extract Telegram photo file_id
-    # Send any photo to the bot and it will reply with file_id
+    # ONLY for Amro bot
+    # Send any photo to Amro bot and it will reply with file_id
     # ---------------------------
-    msg = data.get("message") or {}
-    photos = msg.get("photo") or []
+    if bot_key == "amro":
+        msg = data.get("message") or {}
+        photos = msg.get("photo") or []
 
-    if photos:
-        largest = photos[-1]  # usually the largest resolution
-        file_id = largest.get("file_id", "")
-        file_unique_id = largest.get("file_unique_id", "")
+        if photos:
+            largest = photos[-1]
+            file_id = largest.get("file_id", "")
+            file_unique_id = largest.get("file_unique_id", "")
 
-        log.info("PHOTO file_id=%s file_unique_id=%s", file_id, file_unique_id)
+            log.info("AMRO PHOTO file_id=%s file_unique_id=%s", file_id, file_unique_id)
 
-        if chat_id:
-            tg_send_message(
-                bot_token,
-                chat_id,
-                f"file_id:\n{file_id}\n\nfile_unique_id:\n{file_unique_id}"
-            )
+            if chat_id:
+                tg_send_message(
+                    bot_token,
+                    chat_id,
+                    f"file_id:\n{file_id}\n\nfile_unique_id:\n{file_unique_id}"
+                )
 
-        return {"ok": True}
+            return {"ok": True}
 
     if not chat_id:
         return {"ok": True}
