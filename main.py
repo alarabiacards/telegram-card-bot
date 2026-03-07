@@ -45,7 +45,7 @@ FP_DEDUP_SECONDS = int(os.getenv("FP_DEDUP_SECONDS", "60"))
 TG_API = "https://api.telegram.org/bot{}/{}"
 GEN_COMMANDS = {"GEN", "CONFIRM_GEN"}
 
-# Global generation concurrency
+# Per-queue generation concurrency
 GEN_CONCURRENCY = int(os.getenv("GEN_CONCURRENCY", "1"))
 
 # Instance name for tracking
@@ -831,14 +831,53 @@ def bump_seq(s: Session):
 
 
 # ---------------------------
-# Queue worker + inflight dedupe
+# Queue groups (3 official queues)
 # ---------------------------
-job_queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
+QUEUE_ARABIA_WARD = "queue_arabia_ward"
+QUEUE_HAFEZ_FALAH = "queue_hafez_falah"
+QUEUE_AMRO = "queue_amro"
 
+BOT_TO_QUEUE: Dict[str, str] = {
+    "alarabia": QUEUE_ARABIA_WARD,
+    "kounuz_alward": QUEUE_ARABIA_WARD,
+    "alhafez": QUEUE_HAFEZ_FALAH,
+    "alfalah": QUEUE_HAFEZ_FALAH,
+    "amro": QUEUE_AMRO,
+}
+
+job_queues: Dict[str, asyncio.Queue] = {
+    QUEUE_ARABIA_WARD: asyncio.Queue(maxsize=MAX_QUEUE_SIZE),
+    QUEUE_HAFEZ_FALAH: asyncio.Queue(maxsize=MAX_QUEUE_SIZE),
+    QUEUE_AMRO: asyncio.Queue(maxsize=MAX_QUEUE_SIZE),
+}
+
+queue_sems: Dict[str, asyncio.Semaphore] = {
+    QUEUE_ARABIA_WARD: asyncio.Semaphore(max(1, GEN_CONCURRENCY)),
+    QUEUE_HAFEZ_FALAH: asyncio.Semaphore(max(1, GEN_CONCURRENCY)),
+    QUEUE_AMRO: asyncio.Semaphore(max(1, GEN_CONCURRENCY)),
+}
+
+
+def get_queue_name_for_bot(bot_key: str) -> str:
+    qn = BOT_TO_QUEUE.get(bot_key)
+    if not qn:
+        raise RuntimeError(f"No queue mapped for bot: {bot_key}")
+    return qn
+
+
+def get_queue_for_bot(bot_key: str) -> asyncio.Queue:
+    return job_queues[get_queue_name_for_bot(bot_key)]
+
+
+def get_sem_for_bot(bot_key: str) -> asyncio.Semaphore:
+    return queue_sems[get_queue_name_for_bot(bot_key)]
+
+
+# ---------------------------
+# Inflight dedupe
+# ---------------------------
 _inflight_lock = asyncio.Lock()
 _inflight: set = set()
-
-GEN_SEM = asyncio.Semaphore(max(1, GEN_CONCURRENCY))
 
 
 @dataclass
@@ -854,21 +893,23 @@ class Job:
     template_id: str
     requested_at: float
     seq: int
+    queue_name: str
 
 
-async def worker_loop(worker_id: int):
+async def worker_loop(queue_name: str, worker_id: int):
     require_env()
-    log.info("Worker %s started", worker_id)
+    q = job_queues[queue_name]
+    log.info("Worker %s started for %s", worker_id, queue_name)
     while True:
-        job: Job = await job_queue.get()
+        job: Job = await q.get()
         try:
             await process_job(job)
         except Exception as e:
-            log.exception("Job failed: %s", e)
+            log.exception("Job failed in %s: %s", queue_name, e)
         finally:
             async with _inflight_lock:
                 _inflight.discard((job.bot_key, job.chat_id, job.seq))
-            job_queue.task_done()
+            q.task_done()
 
 
 async def _progress_ping(bot_token: str, bot_key: str, chat_id: str, seq: int):
@@ -892,6 +933,7 @@ async def process_job(job: Job):
     bot = BOTS[job.bot_key]
     bot_token = bot["token"]
     s = get_session(job.bot_key, job.chat_id)
+    queue_sem = get_sem_for_bot(job.bot_key)
 
     async with s.lock:
         if job.seq != s.seq:
@@ -905,7 +947,7 @@ async def process_job(job: Job):
     gen_started_at = None
 
     try:
-        async with GEN_SEM:
+        async with queue_sem:
             gen_started_at = time.time()
             png_bytes = await asyncio.to_thread(
                 generate_card_png,
@@ -941,6 +983,7 @@ async def process_job(job: Job):
             str(job.design_number or 1),
             "",
             INSTANCE_NAME,
+            job.queue_name,
             f"{queue_wait_sec:.2f}",
             f"{gen_sec:.2f}",
         ])
@@ -971,6 +1014,7 @@ async def process_job(job: Job):
             str(job.design_number or 1),
             str(e)[:400],
             INSTANCE_NAME,
+            job.queue_name,
             f"{queue_wait_sec:.2f}",
             f"{gen_sec:.2f}",
         ])
@@ -1125,6 +1169,8 @@ async def handle_webhook(req: Request, bot_key: str):
     is_ar_only = (lang_mode == "AR_ONLY")
     supports_vertical = bool(bot.get("supports_vertical"))
     design_count = int(bot.get("design_count") or 1)
+    queue_name = get_queue_name_for_bot(bot_key)
+    job_queue = get_queue_for_bot(bot_key)
 
     data = await req.json()
     update_id, chat_id, text_raw, msg_id, cq_id, user_id, username = extract_update(data)
@@ -1320,6 +1366,7 @@ async def handle_webhook(req: Request, bot_key: str):
                             template_id=pick_template_id(bot, "SQUARE", 1),
                             requested_at=time.time(),
                             seq=s.seq,
+                            queue_name=queue_name,
                         )
                     )
                 except asyncio.QueueFull:
@@ -1452,6 +1499,7 @@ async def handle_webhook(req: Request, bot_key: str):
                             template_id=template_id,
                             requested_at=time.time(),
                             seq=s.seq,
+                            queue_name=queue_name,
                         )
                     )
                 except asyncio.QueueFull:
@@ -1487,12 +1535,16 @@ async def handle_webhook(req: Request, bot_key: str):
 @app.on_event("startup")
 async def startup():
     require_env()
-    for i in range(max(1, WORKER_COUNT)):
-        asyncio.create_task(worker_loop(i + 1))
+
+    for queue_name in job_queues.keys():
+        for i in range(max(1, WORKER_COUNT)):
+            asyncio.create_task(worker_loop(queue_name, i + 1))
+
     log.info(
-        "App started (workers=%s, max_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss, sheet=%s/%s, instance=%s, output_folder=%s)",
+        "App started (workers_per_queue=%s, max_queue=%s, gen_concurrency_per_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss, sheet=%s/%s, instance=%s, output_folder=%s)",
         WORKER_COUNT,
         MAX_QUEUE_SIZE,
+        GEN_CONCURRENCY,
         RATE_LIMIT_SECONDS,
         FP_DEDUP_SECONDS,
         "on" if SHEET_ID else "off",
@@ -1500,7 +1552,16 @@ async def startup():
         INSTANCE_NAME,
         OUTPUT_FOLDER_ID or "not-set",
     )
+
     log.info("Active bots on this instance: %s", ", ".join(BOTS.keys()))
+    log.info(
+        "Queue mapping: %s",
+        {
+            QUEUE_ARABIA_WARD: ["alarabia", "kounuz_alward"],
+            QUEUE_HAFEZ_FALAH: ["alhafez", "alfalah"],
+            QUEUE_AMRO: ["amro"],
+        },
+    )
 
 
 @app.get("/")
@@ -1510,6 +1571,20 @@ def home():
         "instance": INSTANCE_NAME,
         "active_bots": list(BOTS.keys()),
         "output_folder_set": bool(OUTPUT_FOLDER_ID),
+        "queues": {
+            QUEUE_ARABIA_WARD: {
+                "bots": ["alarabia", "kounuz_alward"],
+                "size": job_queues[QUEUE_ARABIA_WARD].qsize(),
+            },
+            QUEUE_HAFEZ_FALAH: {
+                "bots": ["alhafez", "alfalah"],
+                "size": job_queues[QUEUE_HAFEZ_FALAH].qsize(),
+            },
+            QUEUE_AMRO: {
+                "bots": ["amro"],
+                "size": job_queues[QUEUE_AMRO].qsize(),
+            },
+        },
     }
 
 
