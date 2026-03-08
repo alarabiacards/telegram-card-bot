@@ -1,3 +1,4 @@
+```python
 import os
 import json
 import time
@@ -79,6 +80,26 @@ PLACEHOLDER_EN = os.getenv("PLACEHOLDER_EN", "<<Name in English>>")
 # ---------------------------
 SHEET_ID = os.getenv("SHEET_ID", "").strip()
 SHEET_TAB = os.getenv("SHEET_TAB", "Tracking").strip()
+
+# IMPORTANT:
+# This must match your current sheet headers exactly:
+# A Timestamp
+# B Bot
+# C Status
+# D Ar Name
+# E En Name
+# F Chat ID
+# G User ID
+# H Username
+# I Size
+# J Design
+# K Error
+# L INSTANCE_NAME
+# M QUEUE_WAIT_SEC
+# N GEN_SEC
+#
+# So every appended row must contain EXACTLY 14 values in this order.
+SHEET_COLUMNS_COUNT = 14
 
 # ---------------------------
 # Env (Bots)
@@ -302,6 +323,15 @@ def now_ts_riyadh() -> str:
     return datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def normalize_sheet_row(values: List[str]) -> List[str]:
+    vals = ["" if v is None else str(v) for v in values]
+    if len(vals) < SHEET_COLUMNS_COUNT:
+        vals.extend([""] * (SHEET_COLUMNS_COUNT - len(vals)))
+    elif len(vals) > SHEET_COLUMNS_COUNT:
+        vals = vals[:SHEET_COLUMNS_COUNT]
+    return vals
+
+
 def safe_sheet_append_row(values: List[str]) -> None:
     try:
         sheet_append_row(values)
@@ -314,7 +344,7 @@ def sheet_append_row(values: List[str]) -> None:
         return
     drive, slides, sheets, creds = build_clients()
     rng = f"{SHEET_TAB}!A1"
-    body = {"values": [values]}
+    body = {"values": [normalize_sheet_row(values)]}
     google_execute_with_retry(
         lambda: sheets.spreadsheets()
         .values()
@@ -993,21 +1023,20 @@ async def process_job(job: Job):
             tg_send_message(bot_token, job.chat_id, hz_msg_ready(), hz_kb_after_ready())
 
         safe_sheet_append_row([
-            now_ts_riyadh(),
-            job.bot_key,
-            "SUCCESS",
-            job.name_ar or "",
-            job.name_en or "",
-            job.chat_id or "",
-            job.user_id or "",
-            job.username or "",
-            size_label_ar(job.size_key),
-            str(job.design_number or 1),
-            "",
-            INSTANCE_NAME,
-            job.queue_name,
-            f"{queue_wait_sec:.2f}",
-            f"{gen_sec:.2f}",
+            now_ts_riyadh(),                 # A Timestamp
+            job.bot_key,                     # B Bot
+            "SUCCESS",                       # C Status
+            job.name_ar or "",               # D Ar Name
+            job.name_en or "",               # E En Name
+            job.chat_id or "",               # F Chat ID
+            job.user_id or "",               # G User ID
+            job.username or "",              # H Username
+            size_label_ar(job.size_key),     # I Size
+            str(job.design_number or 1),     # J Design
+            "",                              # K Error
+            INSTANCE_NAME,                   # L INSTANCE_NAME
+            f"{queue_wait_sec:.2f}",         # M QUEUE_WAIT_SEC
+            f"{gen_sec:.2f}",                # N GEN_SEC
         ])
 
         async with s.lock:
@@ -1024,21 +1053,20 @@ async def process_job(job: Job):
             tg_send_message(bot_token, job.chat_id, hz_msg_error(str(e)), hz_kb_start_again())
 
         safe_sheet_append_row([
-            now_ts_riyadh(),
-            job.bot_key,
-            "ERROR",
-            job.name_ar or "",
-            job.name_en or "",
-            job.chat_id or "",
-            job.user_id or "",
-            job.username or "",
-            size_label_ar(job.size_key),
-            str(job.design_number or 1),
-            str(e)[:400],
-            INSTANCE_NAME,
-            job.queue_name,
-            f"{queue_wait_sec:.2f}",
-            f"{gen_sec:.2f}",
+            now_ts_riyadh(),                 # A Timestamp
+            job.bot_key,                     # B Bot
+            "ERROR",                         # C Status
+            job.name_ar or "",               # D Ar Name
+            job.name_en or "",               # E En Name
+            job.chat_id or "",               # F Chat ID
+            job.user_id or "",               # G User ID
+            job.username or "",              # H Username
+            size_label_ar(job.size_key),     # I Size
+            str(job.design_number or 1),     # J Design
+            str(e)[:400],                    # K Error
+            INSTANCE_NAME,                   # L INSTANCE_NAME
+            f"{queue_wait_sec:.2f}",         # M QUEUE_WAIT_SEC
+            f"{gen_sec:.2f}",                # N GEN_SEC
         ])
 
         async with s.lock:
@@ -1651,3 +1679,4 @@ async def webhook_kounuz_alward(req: Request):
 @app.post("/webhook/amro")
 async def webhook_amro(req: Request):
     return await handle_webhook(req, "amro")
+```
