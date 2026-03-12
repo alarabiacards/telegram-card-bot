@@ -1141,8 +1141,11 @@ def generate_card_png(template_id: str, name_ar: str, name_en: str, lang_mode: s
 
 
 # ---------------------------
-# Update parsing
+# Update parsing + smart intent
 # ---------------------------
+ARABIC_DIACRITICS_RE = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
+
+
 def extract_update(data: Dict[str, Any]) -> Tuple[int, Optional[str], Optional[str], Optional[int], Optional[str], Optional[str], Optional[str]]:
     update_id = int(data.get("update_id") or 0)
 
@@ -1170,10 +1173,306 @@ def extract_update(data: Dict[str, Any]) -> Tuple[int, Optional[str], Optional[s
     return update_id, chat_id, text, message_id, None, user_id, username
 
 
+def normalize_intent_text(text: str) -> str:
+    s = clean_text(text).lower()
+    s = s.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+    s = s.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
+    s = ARABIC_DIACRITICS_RE.sub("", s)
+
+    repl = {
+        "أ": "ا",
+        "إ": "ا",
+        "آ": "ا",
+        "ٱ": "ا",
+        "ى": "ي",
+        "ؤ": "و",
+        "ئ": "ي",
+        "ة": "ه",
+        "ـ": " ",
+    }
+    for k, v in repl.items():
+        s = s.replace(k, v)
+
+    s = s.replace("/", " ")
+    s = s.replace("|", " ")
+    s = s.replace("-", " ")
+    s = s.replace("_", " ")
+
+    s = re.sub(r"[^0-9A-Za-z\u0600-\u06FF\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def levenshtein_distance(a: str, b: str) -> int:
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i]
+        for j, cb in enumerate(b, 1):
+            cost = 0 if ca == cb else 1
+            curr.append(min(
+                prev[j] + 1,
+                curr[j - 1] + 1,
+                prev[j - 1] + cost
+            ))
+        prev = curr
+    return prev[-1]
+
+
+def typo_tolerant_match(token: str, keyword: str) -> bool:
+    if not token or not keyword:
+        return False
+
+    if token == keyword:
+        return True
+
+    if keyword in token or token in keyword:
+        shorter = min(len(token), len(keyword))
+        if shorter >= 4:
+            return True
+
+    dist = levenshtein_distance(token, keyword)
+    max_len = max(len(token), len(keyword))
+
+    if max_len <= 4:
+        return dist <= 1
+    if max_len <= 7:
+        return dist <= 2
+    return dist <= 2
+
+
+def contains_any_phrase(text: str, phrases: List[str]) -> bool:
+    nt = normalize_intent_text(text)
+    if not nt:
+        return False
+
+    nt_tokens = nt.split()
+
+    for phrase in phrases:
+        np = normalize_intent_text(phrase)
+        if not np:
+            continue
+
+        if np in nt:
+            return True
+
+        p_tokens = np.split()
+        if not p_tokens:
+            continue
+
+        # exact-ish per-token sequence
+        for start in range(0, len(nt_tokens) - len(p_tokens) + 1):
+            ok = True
+            for i, p_tok in enumerate(p_tokens):
+                if not typo_tolerant_match(nt_tokens[start + i], p_tok):
+                    ok = False
+                    break
+            if ok:
+                return True
+
+        # fallback: all phrase tokens found somewhere in text
+        all_found = True
+        for p_tok in p_tokens:
+            found = any(typo_tolerant_match(t, p_tok) for t in nt_tokens)
+            if not found:
+                all_found = False
+                break
+        if all_found:
+            return True
+
+    return False
+
+
+def extract_design_number(text: str, max_design: int) -> Optional[int]:
+    nt = normalize_intent_text(text)
+    if not nt:
+        return None
+
+    m = re.search(r"\b([1-9]\d*)\b", nt)
+    if m:
+        idx = int(m.group(1))
+        if 1 <= idx <= max_design:
+            return idx
+
+    en_map = {
+        "one": 1, "first": 1,
+        "two": 2, "second": 2,
+        "three": 3, "third": 3,
+        "four": 4, "fourth": 4,
+        "five": 5, "fifth": 5,
+    }
+    for word, idx in en_map.items():
+        if contains_any_phrase(nt, [word]) and 1 <= idx <= max_design:
+            return idx
+
+    ar_map = {
+        "الاول": 1, "اول": 1, "واحد": 1,
+        "الثاني": 2, "ثاني": 2, "اثنين": 2, "اثنان": 2,
+        "الثالث": 3, "ثالث": 3, "ثلاثه": 3, "ثلاثة": 3,
+        "الرابع": 4, "رابع": 4, "اربعه": 4, "اربعه": 4, "أربعة": 4,
+        "الخامس": 5, "خامس": 5, "خمسه": 5, "خمسة": 5,
+    }
+    for word, idx in ar_map.items():
+        if contains_any_phrase(nt, [word]) and 1 <= idx <= max_design:
+            return idx
+
+    return None
+
+
 def normalize_cmd(text: str) -> str:
-    t = clean_text(text).lower()
-    if t in ("/start", "start", "ابدأ", "ابدا", "البداية"):
+    nt = normalize_intent_text(text)
+
+    if nt in {"start", "home", "menu", "ابدا", "ابدأ", "البدايه", "البداية"}:
         return "START"
+
+    if nt in {"cancel", "الغاء", "إلغاء", "الغاء العمليه", "ايقاف", "stop"}:
+        return "CANCEL"
+
+    return ""
+
+
+def infer_command(
+    text: str,
+    state: str,
+    is_ar_only: bool,
+    supports_vertical: bool,
+    design_count: int,
+    chosen_size: str = "",
+) -> str:
+    raw = clean_text(text)
+    if not raw:
+        return ""
+
+    if raw in {
+        "EDIT_AR", "EDIT_EN", "GEN", "GEN_SQUARE", "GEN_VERTICAL",
+        "START_CARD", "START", "CONFIRM_NAME", "CANCEL",
+        "BACK_SIZE", "BACK_DESIGN", "CONFIRM_GEN",
+    }:
+        return raw
+
+    if raw.startswith("DESIGN_"):
+        return raw
+
+    basic = normalize_cmd(raw)
+    if basic:
+        return basic
+
+    start_card_phrases = [
+        "اصدار بطاقه", "اصدار بطاقة",
+        "انشاء بطاقه", "انشاء بطاقة",
+        "بطاقه تهنئه", "بطاقة تهنئة",
+        "generate card", "create card",
+        "generate", "create",
+    ]
+
+    confirm_phrases = [
+        "تأكيد", "تاكيد", "تأكيد الاصدار", "تاكيد الاصدار",
+        "تأكيد البطاقه", "تأكيد البطاقة",
+        "confirm", "confirm generate", "confirm card",
+        "generate", "create", "yes", "ok", "okay", "done",
+        "ابدأ الاصدار", "ابدا الاصدار", "ابدأ", "ابدا",
+    ]
+
+    confirm_name_phrases = [
+        "تأكيد الاسم", "تاكيد الاسم", "تأكيد", "تاكيد",
+        "confirm name", "confirm", "yes", "ok", "okay",
+    ]
+
+    cancel_phrases = [
+        "الغاء", "إلغاء", "الغاء العمليه", "إلغاء العملية",
+        "cancel", "stop", "abort",
+    ]
+
+    edit_ar_phrases = [
+        "تعديل العربي", "تعديل الاسم العربي", "تعديل الاسم",
+        "عدل العربي", "عدل الاسم", "غير الاسم", "تغيير الاسم",
+        "edit arabic", "edit ar", "edit name", "change name",
+    ]
+
+    edit_en_phrases = [
+        "تعديل الانجليزي", "تعديل الإنجليزي", "تعديل الاسم الانجليزي", "تعديل الاسم الإنجليزي",
+        "عدل الانجليزي", "عدل الإنجليزي",
+        "edit english", "edit en",
+    ]
+
+    square_phrases = [
+        "مربع", "مربعه", "مربعة", "square", "squar",
+    ]
+
+    vertical_phrases = [
+        "طولي", "طوليه", "طولية", "عمودي", "vertical", "portrait", "vertcal",
+    ]
+
+    back_size_phrases = [
+        "تغيير المقاس", "غير المقاس", "تعديل المقاس",
+        "change size", "edit size", "back size", "size",
+    ]
+
+    back_design_phrases = [
+        "تغيير التصميم", "غير التصميم", "تعديل التصميم",
+        "change design", "edit design", "back design", "design",
+    ]
+
+    if state == STATE_MENU:
+        if contains_any_phrase(raw, start_card_phrases):
+            return "START_CARD"
+
+    if state == STATE_WAIT_EN and contains_any_phrase(raw, edit_ar_phrases):
+        return "EDIT_AR"
+
+    if state == STATE_REVIEW_NAME and is_ar_only:
+        if contains_any_phrase(raw, cancel_phrases):
+            return "CANCEL"
+        if contains_any_phrase(raw, edit_ar_phrases):
+            return "EDIT_AR"
+        if contains_any_phrase(raw, confirm_name_phrases):
+            return "CONFIRM_NAME"
+
+    if state == STATE_CONFIRM and (not is_ar_only):
+        if contains_any_phrase(raw, cancel_phrases):
+            return "CANCEL"
+        if contains_any_phrase(raw, edit_ar_phrases):
+            return "EDIT_AR"
+        if contains_any_phrase(raw, edit_en_phrases):
+            return "EDIT_EN"
+        if contains_any_phrase(raw, confirm_phrases):
+            return "GEN"
+
+    if state == STATE_CHOOSE_SIZE and is_ar_only:
+        if contains_any_phrase(raw, cancel_phrases):
+            return "CANCEL"
+        if contains_any_phrase(raw, square_phrases):
+            return "GEN_SQUARE"
+        if supports_vertical and contains_any_phrase(raw, vertical_phrases):
+            return "GEN_VERTICAL"
+
+    if state == STATE_CHOOSE_DESIGN and is_ar_only:
+        if contains_any_phrase(raw, cancel_phrases):
+            return "CANCEL"
+
+        idx = extract_design_number(raw, design_count)
+        if idx is not None:
+            s_prefix = "S" if (chosen_size or "SQUARE") == "SQUARE" else "V"
+            return f"DESIGN_{s_prefix}_{idx}"
+
+    if state == STATE_PREVIEW_AR and is_ar_only:
+        if contains_any_phrase(raw, cancel_phrases):
+            return "CANCEL"
+        if contains_any_phrase(raw, edit_ar_phrases):
+            return "EDIT_AR"
+        if supports_vertical and contains_any_phrase(raw, back_size_phrases):
+            return "BACK_SIZE"
+        if design_count > 1 and contains_any_phrase(raw, back_design_phrases):
+            return "BACK_DESIGN"
+        if contains_any_phrase(raw, confirm_phrases):
+            return "CONFIRM_GEN"
+
     return ""
 
 
@@ -1236,17 +1535,19 @@ async def handle_webhook(req: Request, bot_key: str):
             s.username = username
 
     text = clean_text(text_raw)
-    cmd = normalize_cmd(text)
 
-    if text in (
-        "EDIT_AR", "EDIT_EN", "GEN", "GEN_SQUARE", "GEN_VERTICAL",
-        "START_CARD", "START", "CONFIRM_NAME", "CANCEL",
-        "BACK_SIZE", "BACK_DESIGN", "CONFIRM_GEN",
-    ):
-        cmd = text
+    async with s.lock:
+        current_state = s.state
+        current_chosen_size = s.chosen_size
 
-    if text.startswith("DESIGN_"):
-        cmd = text
+    cmd = infer_command(
+        text=text,
+        state=current_state,
+        is_ar_only=is_ar_only,
+        supports_vertical=supports_vertical,
+        design_count=design_count,
+        chosen_size=current_chosen_size,
+    )
 
     fp = f"{update_id}|{msg_id}|{cq_id or ''}|{cmd}|{text}"
     now = time.time()
@@ -1497,7 +1798,11 @@ async def handle_webhook(req: Request, bot_key: str):
                 parts = cmd.split("_")
                 if len(parts) == 3:
                     sv = parts[1]
-                    idx = int(parts[2])
+                    try:
+                        idx = int(parts[2])
+                    except Exception:
+                        idx = 1
+
                     size_key = "SQUARE" if sv == "S" else "VERTICAL"
                     s.chosen_size = size_key
                     s.chosen_design = max(1, min(design_count, idx))
