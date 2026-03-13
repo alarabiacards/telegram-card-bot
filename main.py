@@ -7,7 +7,7 @@ import logging
 import random
 import secrets
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, Tuple, List, Union
+from typing import Optional, Dict, Any, Tuple, List
 from datetime import datetime, timezone, timedelta
 
 import requests
@@ -568,7 +568,7 @@ def get_share_item(token: str) -> Optional[Dict[str, Any]]:
 
 
 def share_btn_text(is_ar_only: bool) -> str:
-    return "📤 مشاركة البطاقة" if is_ar_only else "📤 مشاركة البطاقة / Share Card"
+    return "💚 إرسال عبر واتساب" if is_ar_only else "💚 Send via WhatsApp / إرسال عبر واتساب"
 
 
 def start_btn_text(is_ar_only: bool) -> str:
@@ -2198,6 +2198,18 @@ async def handle_webhook(req: Request, bot_key: str):
 # ---------------------------
 # Generic share routes
 # ---------------------------
+def build_share_link_url(token: str) -> str:
+    return make_public_url(f"/share-link/{token}")
+
+
+def build_share_file_url(token: str) -> str:
+    return make_public_url(f"/share-file/{token}.png")
+
+
+def build_share_prepared_url(token: str) -> str:
+    return make_public_url(f"/share-prepared/{token}")
+
+
 @app.get("/share-file/{token}.png")
 async def share_file(token: str):
     item = get_share_item(token)
@@ -2208,7 +2220,7 @@ async def share_file(token: str):
         content=item["png_bytes"],
         media_type="image/png",
         headers={
-            "Cache-Control": "private, max-age=300",
+            "Cache-Control": "public, max-age=300",
             "Content-Disposition": f'inline; filename="card-{token}.png"',
         },
     )
@@ -2229,7 +2241,7 @@ async def share_prepared(token: str):
         raise HTTPException(status_code=400, detail="Missing or invalid user_id")
 
     bot_token = BOTS[bot_key]["token"]
-    image_url = make_public_url(f"/share-file/{token}.png")
+    image_url = build_share_file_url(token)
 
     is_ar_only = BOTS[bot_key].get("lang_mode") == "AR_ONLY"
     if is_ar_only:
@@ -2259,25 +2271,58 @@ async def share_prepared(token: str):
     }
 
 
-@app.get("/share-mini/{token}", response_class=HTMLResponse)
-async def share_mini(token: str):
+@app.get("/share-link/{token}", response_class=HTMLResponse)
+async def share_link(token: str):
+    """
+    صفحة خفيفة مخصصة لواتساب والمعاينات الخارجية.
+    الهدف منها:
+    - تحسين معاينة الرابط في WhatsApp عبر Open Graph
+    - توفير صفحة لطيفة إذا فتحها المستخدم مباشرة
+    """
     item = get_share_item(token)
     if not item:
         raise HTTPException(status_code=404, detail="Card not found or expired")
 
-    image_url = make_public_url(f"/share-file/{token}.png")
-    prepared_url = make_public_url(f"/share-prepared/{token}")
+    bot_key = str(item.get("bot_key") or "").strip()
+    bot = BOTS.get(bot_key, {})
+    is_ar_only = bot.get("lang_mode") == "AR_ONLY"
+
+    image_url = build_share_file_url(token)
+    mini_url = make_public_url(f"/share-mini/{token}")
+
+    title = "بطاقة تهنئة" if is_ar_only else "Greeting Card"
+    description = (
+        "بطاقة تهنئة جاهزة للعرض والمشاركة"
+        if is_ar_only else
+        "Greeting card ready to view and share"
+    )
+    open_share_text = "فتح صفحة المشاركة" if is_ar_only else "Open Share Page"
+    open_image_text = "فتح الصورة مباشرة" if is_ar_only else "Open Image Directly"
 
     html = f"""<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
-  />
-  <title>Share Card</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>{title}</title>
+  <meta name="description" content="{description}" />
+
+  <!-- Open Graph for WhatsApp / social preview -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="{title}" />
+  <meta property="og:description" content="{description}" />
+  <meta property="og:image" content="{image_url}" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:image:alt" content="{title}" />
+  <meta property="og:url" content="{mini_url}" />
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="{title}" />
+  <meta name="twitter:description" content="{description}" />
+  <meta name="twitter:image" content="{image_url}" />
+
   <style>
     * {{
       box-sizing: border-box;
@@ -2290,33 +2335,29 @@ async def share_mini(token: str):
       color: #0f172a;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, Arial, sans-serif;
     }}
-    body {{
-      min-height: 100vh;
-    }}
     .wrap {{
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 18px;
+      padding: 20px;
     }}
     .card {{
       width: 100%;
-      max-width: 540px;
-      background: #ffffff;
-      border-radius: 24px;
-      box-shadow: 0 10px 35px rgba(15, 23, 42, 0.12);
+      max-width: 560px;
+      background: #fff;
+      border-radius: 22px;
       padding: 18px;
+      box-shadow: 0 10px 35px rgba(15, 23, 42, 0.10);
+      text-align: center;
     }}
     .title {{
-      text-align: center;
-      font-size: 26px;
+      font-size: 28px;
       font-weight: 800;
       margin-bottom: 10px;
     }}
     .sub {{
-      text-align: center;
-      font-size: 16px;
+      font-size: 17px;
       line-height: 1.9;
       color: #475569;
       margin-bottom: 14px;
@@ -2329,50 +2370,192 @@ async def share_mini(token: str):
     }}
     .preview img {{
       width: 100%;
-      height: auto;
       display: block;
       border-radius: 14px;
       background: #fff;
     }}
     .btn {{
+      display: block;
       width: 100%;
+      text-decoration: none;
       border: 0;
       border-radius: 18px;
       padding: 18px 14px;
-      font-size: 24px;
+      font-size: 22px;
       font-weight: 800;
       cursor: pointer;
+      margin-top: 10px;
+    }}
+    .btn-green {{
       background: #16a34a;
       color: #fff;
-      margin-top: 8px;
     }}
+    .btn-blue {{
+      background: #2563eb;
+      color: #fff;
+    }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="title">{title}</div>
+      <div class="sub">{description}</div>
+
+      <div class="preview">
+        <img src="{image_url}" alt="{title}" />
+      </div>
+
+      <a class="btn btn-green" href="{mini_url}">
+        {open_share_text}
+      </a>
+
+      <a class="btn btn-blue" href="{image_url}" target="_blank" rel="noopener noreferrer">
+        {open_image_text}
+      </a>
+    </div>
+  </div>
+</body>
+</html>
+"""
+    return HTMLResponse(content=html)
+
+
+@app.get("/share-mini/{token}", response_class=HTMLResponse)
+async def share_mini(token: str):
+    item = get_share_item(token)
+    if not item:
+        raise HTTPException(status_code=404, detail="Card not found or expired")
+
+    bot_key = str(item.get("bot_key") or "").strip()
+    bot = BOTS.get(bot_key, {})
+    is_ar_only = bot.get("lang_mode") == "AR_ONLY"
+
+    image_url = build_share_file_url(token)
+    share_link_url = build_share_link_url(token)
+
+    page_title = "بطاقتك جاهزة" if is_ar_only else "Your card is ready"
+    og_title = "بطاقة تهنئة" if is_ar_only else "Greeting Card"
+    og_desc = "بطاقة تهنئة جاهزة للمشاركة" if is_ar_only else "Greeting card ready to share"
+
+    html = f"""<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
+  />
+  <title>{page_title}</title>
+
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="{og_title}" />
+  <meta property="og:description" content="{og_desc}" />
+  <meta property="og:image" content="{image_url}" />
+  <meta property="og:image:type" content="image/png" />
+  <meta property="og:url" content="{share_link_url}" />
+
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <style>
+    * {{
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }}
+
+    html, body {{
+      margin: 0;
+      padding: 0;
+      background: #f8fafc;
+      color: #0f172a;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, Arial, sans-serif;
+    }}
+
+    body {{
+      min-height: 100vh;
+    }}
+
+    .wrap {{
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+    }}
+
+    .card {{
+      width: 100%;
+      max-width: 560px;
+      background: #ffffff;
+      border-radius: 24px;
+      box-shadow: 0 10px 35px rgba(15, 23, 42, 0.12);
+      padding: 18px;
+    }}
+
+    .title {{
+      text-align: center;
+      font-size: 30px;
+      font-weight: 900;
+      margin-bottom: 10px;
+      line-height: 1.5;
+    }}
+
+    .sub {{
+      text-align: center;
+      font-size: 18px;
+      line-height: 2;
+      color: #475569;
+      margin-bottom: 14px;
+    }}
+
+    .preview {{
+      background: #eef2f7;
+      border-radius: 18px;
+      padding: 10px;
+      margin-bottom: 14px;
+    }}
+
+    .preview img {{
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 14px;
+      background: #fff;
+    }}
+
+    .btn {{
+      width: 100%;
+      border: 0;
+      border-radius: 18px;
+      padding: 20px 14px;
+      font-size: 24px;
+      font-weight: 900;
+      cursor: pointer;
+      margin-top: 12px;
+    }}
+
     .btn:disabled {{
       opacity: 0.65;
       cursor: default;
     }}
-    .btn-secondary {{
-      width: 100%;
-      border: 0;
-      border-radius: 18px;
-      padding: 16px 14px;
-      font-size: 20px;
-      font-weight: 700;
-      cursor: pointer;
-      background: #e2e8f0;
-      color: #0f172a;
-      margin-top: 10px;
+
+    .btn-whatsapp {{
+      background: #25D366;
+      color: #fff;
     }}
-    .btn-secondary:disabled {{
-      opacity: 0.65;
-      cursor: default;
+
+    .btn-download {{
+      background: #16a34a;
+      color: #fff;
     }}
+
     .note {{
       text-align: center;
-      margin-top: 12px;
-      font-size: 15px;
-      line-height: 1.8;
+      margin-top: 16px;
+      font-size: 17px;
+      line-height: 2;
       color: #64748b;
-      min-height: 30px;
+      min-height: 42px;
       white-space: pre-line;
     }}
   </style>
@@ -2387,8 +2570,9 @@ async def share_mini(token: str):
         <img id="cardImage" src="{image_url}" alt="" />
       </div>
 
-      <button id="shareBtn" class="btn"></button>
-      <button id="openBtn" class="btn-secondary"></button>
+      <button id="waBtn" class="btn btn-whatsapp"></button>
+      <button id="downloadBtn" class="btn btn-download"></button>
+
       <div id="note" class="note"></div>
     </div>
   </div>
@@ -2396,7 +2580,7 @@ async def share_mini(token: str):
   <script>
     const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
     const absoluteImageUrl = {json.dumps(image_url)};
-    const preparedApiUrl = {json.dumps(prepared_url)};
+    const shareLinkUrl = {json.dumps(share_link_url)};
 
     function getLang() {{
       const tgLang = tg?.initDataUnsafe?.user?.language_code || "";
@@ -2409,36 +2593,28 @@ async def share_mini(token: str):
 
     const I18N = {{
       ar: {{
-        pageTitle: "مشاركة البطاقة",
-        title: "مشاركة البطاقة",
-        subtitle: "اضغط الزر لمشاركة الصورة",
-        shareBtn: "📤 مشاركة البطاقة",
-        openBtn: "🖼️ فتح الصورة",
-        opening: "جاري فتح المشاركة...",
-        preparingTelegram: "جاري تجهيز المشاركة داخل تيليجرام...",
-        shared: "تمت المشاركة بنجاح.",
-        shareCancelled: "",
-        failed: "تعذر فتح المشاركة.",
-        openOnly: "تم فتح الصورة.",
-        telegramFallback: "تعذر فتح مشاركة الملف المباشرة. تم التحويل إلى مشاركة تيليجرام.",
-        unsupported: "تعذر فتح المشاركة المباشرة. يمكنك فتح الصورة ومشاركتها يدويًا.",
+        pageTitle: "بطاقتك جاهزة",
+        title: "بطاقتك جاهزة",
+        subtitle: "سيتم فتح واتساب تلقائيًا، وإذا لم يفتح استخدم الأزرار أدناه",
+        waBtn: "💚 إرسال عبر واتساب",
+        downloadBtn: "⬇️ حفظ البطاقة في الجوال",
+        openingWhatsApp: "جاري فتح واتساب...",
+        whatsappFallback: "إذا لم يفتح واتساب تلقائيًا، اضغط الزر الأخضر.",
+        savedHint: "بعد حفظ الصورة ستجدها في الاستديو ويمكنك إرسالها لأي شخص.",
+        openHint: "إذا لم يبدأ الحفظ تلقائيًا، ستفتح الصورة ويمكنك الضغط مطولًا عليها ثم اختيار حفظ الصورة.",
         imageAlt: "بطاقة التهنئة"
       }},
       en: {{
-        pageTitle: "Share Card",
-        title: "Share Card",
-        subtitle: "Tap the button to share the image",
-        shareBtn: "📤 Share Card",
-        openBtn: "🖼️ Open Image",
-        opening: "Opening share sheet...",
-        preparingTelegram: "Preparing Telegram share...",
-        shared: "Shared successfully.",
-        shareCancelled: "",
-        failed: "Could not open sharing.",
-        openOnly: "Image opened.",
-        telegramFallback: "Direct file sharing is unavailable. Switched to Telegram sharing.",
-        unsupported: "Direct sharing is unavailable. You can open the image and share it manually.",
-        imageAlt: "Greeting Card"
+        pageTitle: "Your card is ready",
+        title: "Your card is ready",
+        subtitle: "WhatsApp will open automatically. If it does not, use the buttons below",
+        waBtn: "💚 Send via WhatsApp",
+        downloadBtn: "⬇️ Save card to phone",
+        openingWhatsApp: "Opening WhatsApp...",
+        whatsappFallback: "If WhatsApp does not open automatically, tap the green button.",
+        savedHint: "After saving, you will find the image in your gallery and can send it to anyone.",
+        openHint: "If saving does not start automatically, the image will open and you can long-press it to save.",
+        imageAlt: "Greeting card"
       }}
     }};
 
@@ -2451,15 +2627,15 @@ async def share_mini(token: str):
     const titleEl = document.getElementById("title");
     const subtitleEl = document.getElementById("subtitle");
     const cardImage = document.getElementById("cardImage");
-    const shareBtn = document.getElementById("shareBtn");
-    const openBtn = document.getElementById("openBtn");
+    const waBtn = document.getElementById("waBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
     const note = document.getElementById("note");
 
     titleEl.textContent = T.title;
     subtitleEl.textContent = T.subtitle;
-    shareBtn.textContent = T.shareBtn;
-    openBtn.textContent = T.openBtn;
     cardImage.alt = T.imageAlt;
+    waBtn.textContent = T.waBtn;
+    downloadBtn.textContent = T.downloadBtn;
 
     if (tg) {{
       try {{
@@ -2470,237 +2646,87 @@ async def share_mini(token: str):
       }}
     }}
 
-    let isBusy = false;
-
-    function setBusy(flag) {{
-      isBusy = !!flag;
-      shareBtn.disabled = isBusy;
-      openBtn.disabled = isBusy;
-    }}
-
     function setNote(text) {{
       note.textContent = text || "";
     }}
 
-    function isTelegramMiniApp() {{
-      return !!(tg && tg.initDataUnsafe);
+    function buildWhatsAppUrl() {{
+      const message = LANG === "ar"
+        ? "بطاقة تهنئة خاصة\\n" + shareLinkUrl
+        : "A greeting card for you\\n" + shareLinkUrl;
+
+      return "https://wa.me/?text=" + encodeURIComponent(message);
     }}
 
-    function isAndroid() {{
-      const platform = (tg?.platform || "").toLowerCase();
-      const ua = (navigator.userAgent || "").toLowerCase();
-      return platform === "android" || ua.includes("android");
-    }}
-
-    async function buildShareFile() {{
-      const res = await fetch(absoluteImageUrl, {{
-        cache: "no-store",
-        credentials: "omit"
-      }});
-      if (!res.ok) throw new Error("failed_to_fetch_image");
-      const blob = await res.blob();
-      return new File([blob], "card.png", {{ type: blob.type || "image/png" }});
+    function openWhatsApp() {{
+      setNote(T.openingWhatsApp);
+      window.location.href = buildWhatsAppUrl();
     }}
 
     function openImageOnly() {{
-      window.open(absoluteImageUrl, "_blank");
-      setNote(T.openOnly);
+      window.open(absoluteImageUrl, "_blank", "noopener,noreferrer");
+      setNote(T.openHint);
     }}
 
-    async function requestPreparedMessageId() {{
-      const res = await fetch(preparedApiUrl, {{
-        method: "POST",
-        credentials: "omit",
-        headers: {{
-          "Content-Type": "application/json"
-        }}
-      }});
-
-      if (!res.ok) {{
-        throw new Error("prepared_message_request_failed");
-      }}
-
-      const data = await res.json();
-      if (!data || !data.ok || !data.id) {{
-        throw new Error("prepared_message_invalid_response");
-      }}
-
-      return data.id;
-    }}
-
-    function sendPreparedMessage(id) {{
-      return new Promise((resolve, reject) => {{
-        if (!tg) {{
-          reject(new Error("telegram_not_available"));
+    function downloadCard() {{
+      try {{
+        if (tg && typeof tg.downloadFile === "function") {{
+          tg.downloadFile({{
+            url: absoluteImageUrl,
+            file_name: "card.png"
+          }});
+          setNote(T.savedHint);
           return;
         }}
-
-        let done = false;
-
-        function cleanup() {{
-          try {{
-            tg.offEvent("shareMessageSent", onSent);
-            tg.offEvent("shareMessageFailed", onFailed);
-            tg.offEvent("prepared_message_sent", onPreparedSent);
-            tg.offEvent("prepared_message_failed", onPreparedFailed);
-          }} catch (e) {{
-            console.log("cleanup event error", e);
-          }}
-        }}
-
-        function finishOk() {{
-          if (done) return;
-          done = true;
-          cleanup();
-          resolve();
-        }}
-
-        function finishErr(error) {{
-          if (done) return;
-          done = true;
-          cleanup();
-          reject(error instanceof Error ? error : new Error(String(error || "telegram_share_failed")));
-        }}
-
-        function onSent() {{
-          finishOk();
-        }}
-
-        function onFailed(payload) {{
-          const msg = payload && payload.error ? payload.error : "shareMessageFailed";
-          finishErr(new Error(msg));
-        }}
-
-        function onPreparedSent() {{
-          finishOk();
-        }}
-
-        function onPreparedFailed(payload) {{
-          const msg = payload && payload.error ? payload.error : "prepared_message_failed";
-          finishErr(new Error(msg));
-        }}
-
-        try {{
-          tg.onEvent("shareMessageSent", onSent);
-          tg.onEvent("shareMessageFailed", onFailed);
-          tg.onEvent("prepared_message_sent", onPreparedSent);
-          tg.onEvent("prepared_message_failed", onPreparedFailed);
-        }} catch (e) {{
-          console.log("event bind error", e);
-        }}
-
-        try {{
-          if (typeof tg.shareMessage === "function") {{
-            tg.shareMessage(id);
-          }} else if (window.TelegramWebviewProxy && typeof window.TelegramWebviewProxy.postEvent === "function") {{
-            window.TelegramWebviewProxy.postEvent(
-              "web_app_send_prepared_message",
-              JSON.stringify({{ id }})
-            );
-          }} else if (window.external && typeof window.external.notify === "function") {{
-            window.external.notify(
-              JSON.stringify({{
-                eventType: "web_app_send_prepared_message",
-                eventData: {{ id }}
-              }})
-            );
-          }} else {{
-            finishErr(new Error("telegram_share_api_not_available"));
-            return;
-          }}
-        }} catch (e) {{
-          finishErr(e);
-          return;
-        }}
-
-        setTimeout(() => {{
-          if (!done) {{
-            finishErr(new Error("telegram_share_timeout"));
-          }}
-        }}, 15000);
-      }});
-    }}
-
-    async function tryNativeShareFirst() {{
-      const file = await buildShareFile();
-      if (navigator.canShare && navigator.canShare({{ files: [file] }})) {{
-        await navigator.share({{ files: [file] }});
-        return true;
+      }} catch (e) {{
+        console.log("telegram download failed", e);
       }}
-      return false;
-    }}
-
-    async function tryTelegramPreparedShare() {{
-      if (!isTelegramMiniApp()) {{
-        return false;
-      }}
-
-      setNote(T.preparingTelegram);
-      const preparedId = await requestPreparedMessageId();
-      await sendPreparedMessage(preparedId);
-      setNote(T.shared);
-      return true;
-    }}
-
-    async function doShare() {{
-      if (isBusy) return;
-
-      setBusy(true);
-      setNote(T.opening);
 
       try {{
-        const nativeShared = await tryNativeShareFirst();
-        if (nativeShared) {{
-          setNote("");
-          return;
-        }}
-
-        if (isTelegramMiniApp()) {{
-          try {{
-            if (isAndroid()) {{
-              setNote(T.telegramFallback);
-            }}
-            const tgShared = await tryTelegramPreparedShare();
-            if (tgShared) {{
-              return;
-            }}
-          }} catch (e) {{
-            console.log("telegram prepared share failed", e);
-          }}
-        }}
-
+        const a = document.createElement("a");
+        a.href = absoluteImageUrl;
+        a.download = "card.png";
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setNote(T.savedHint);
+      }} catch (e) {{
+        console.log("download fallback failed", e);
         openImageOnly();
-      }} catch (err) {{
-        console.log("share failed", err);
-        const errName = (err && err.name) ? err.name : "";
-
-        if (errName === "AbortError") {{
-          setNote(T.shareCancelled);
-        }} else {{
-          try {{
-            if (isTelegramMiniApp()) {{
-              if (isAndroid()) {{
-                setNote(T.telegramFallback);
-              }}
-              const tgShared = await tryTelegramPreparedShare();
-              if (tgShared) {{
-                return;
-              }}
-            }}
-          }} catch (e) {{
-            console.log("telegram fallback failed", e);
-          }}
-
-          setNote(T.unsupported);
-          openImageOnly();
-        }}
-      }} finally {{
-        setBusy(false);
       }}
     }}
 
-    shareBtn.addEventListener("click", doShare);
-    openBtn.addEventListener("click", openImageOnly);
+    let autoRedirectTried = false;
+
+    function tryAutoOpenWhatsApp() {{
+      if (autoRedirectTried) return;
+      autoRedirectTried = true;
+
+      setNote(T.openingWhatsApp);
+
+      const start = Date.now();
+      const targetUrl = buildWhatsAppUrl();
+
+      setTimeout(() => {{
+        const elapsed = Date.now() - start;
+        if (elapsed < 2500) {{
+          setNote(T.whatsappFallback);
+        }}
+      }}, 1800);
+
+      window.location.href = targetUrl;
+    }}
+
+    waBtn.addEventListener("click", openWhatsApp);
+    downloadBtn.addEventListener("click", downloadCard);
+
+    window.addEventListener("load", () => {{
+      setTimeout(() => {{
+        tryAutoOpenWhatsApp();
+      }}, 500);
+    }});
   </script>
 </body>
 </html>
