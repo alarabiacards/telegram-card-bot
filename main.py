@@ -5,12 +5,17 @@ import re
 import asyncio
 import logging
 import random
+import secrets
+import mimetypes
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, Tuple, List, Union
 from datetime import datetime, timezone, timedelta
+from urllib.parse import quote
 
 import requests
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 
 from google.oauth2.credentials import Credentials
 from google.oauth2 import service_account
@@ -56,6 +61,11 @@ ACTIVE_BOTS = os.getenv("ACTIVE_BOTS", "").strip()
 
 # NEW: temp folder where copied presentations are created
 OUTPUT_FOLDER_ID = os.getenv("OUTPUT_FOLDER_ID", "").strip()
+
+# NEW: public share page settings for Amro
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+PUBLIC_CARDS_DIR = Path(os.getenv("PUBLIC_CARDS_DIR", "public_cards")).resolve()
+PUBLIC_CARDS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------
 # Google (shared)
@@ -439,6 +449,59 @@ def tg_send_photo_by_file_id(
     if reply_markup is not None:
         data["reply_markup"] = json.dumps(reply_markup)
     tg(bot_token, "sendPhoto", data=data)
+
+
+# ---------------------------
+# Public cards helpers (Amro only)
+# ---------------------------
+def guess_base_url() -> str:
+    if PUBLIC_BASE_URL:
+        return PUBLIC_BASE_URL
+    render_external = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+    if render_external:
+        return render_external
+    return ""
+
+
+def make_public_url(path: str) -> str:
+    base = guess_base_url()
+    if not base:
+        return ""
+    return f"{base}{path}"
+
+
+def save_public_card_png(bot_key: str, png_bytes: bytes) -> Optional[str]:
+    if bot_key != "amro":
+        return None
+
+    token = secrets.token_urlsafe(16)
+    folder = PUBLIC_CARDS_DIR / bot_key
+    folder.mkdir(parents=True, exist_ok=True)
+    file_path = folder / f"{token}.png"
+    file_path.write_bytes(png_bytes)
+    return token
+
+
+def public_card_file_path(bot_key: str, token: str) -> Path:
+    safe_bot = re.sub(r"[^a-zA-Z0-9_\-]", "", bot_key)
+    safe_token = re.sub(r"[^a-zA-Z0-9_\-]", "", token)
+    return PUBLIC_CARDS_DIR / safe_bot / f"{safe_token}.png"
+
+
+def kb_amro_share_page(page_url: str) -> dict:
+    return {
+        "inline_keyboard": [
+            [{"text": "📤 فتح صفحة المشاركة", "url": page_url}],
+            [{"text": "↩️ البداية", "callback_data": "START"}],
+        ]
+    }
+
+
+def msg_amro_share_page() -> str:
+    return (
+        "تم تجهيز صفحة البطاقة.\n\n"
+        "اضغط الزر التالي لفتح صفحة المشاركة والتنزيل."
+    )
 
 
 # ---------------------------
@@ -1016,10 +1079,24 @@ async def process_job(job: Job):
 
         tg_send_photo(bot_token, job.chat_id, png_bytes, caption="", reply_markup=None)
 
+        share_page_url = ""
+        if job.bot_key == "amro":
+            public_token = save_public_card_png(job.bot_key, png_bytes)
+            if public_token:
+                share_page_url = make_public_url(f"/amro/share/{public_token}")
+
         if bot["lang_mode"] == "AR_EN":
             tg_send_message(bot_token, job.chat_id, ar_msg_ready(), ar_kb_after_ready())
         else:
             tg_send_message(bot_token, job.chat_id, hz_msg_ready(), hz_kb_after_ready())
+
+        if job.bot_key == "amro" and share_page_url:
+            tg_send_message(
+                bot_token,
+                job.chat_id,
+                msg_amro_share_page(),
+                kb_amro_share_page(share_page_url),
+            )
 
         safe_sheet_append_row([
             now_ts_riyadh(),
@@ -1266,7 +1343,6 @@ def contains_any_phrase(text: str, phrases: List[str]) -> bool:
         if not p_tokens:
             continue
 
-        # exact-ish per-token sequence
         for start in range(0, len(nt_tokens) - len(p_tokens) + 1):
             ok = True
             for i, p_tok in enumerate(p_tokens):
@@ -1276,7 +1352,6 @@ def contains_any_phrase(text: str, phrases: List[str]) -> bool:
             if ok:
                 return True
 
-        # fallback: all phrase tokens found somewhere in text
         all_found = True
         for p_tok in p_tokens:
             found = any(typo_tolerant_match(t, p_tok) for t in nt_tokens)
@@ -1315,7 +1390,7 @@ def extract_design_number(text: str, max_design: int) -> Optional[int]:
         "الاول": 1, "اول": 1, "واحد": 1,
         "الثاني": 2, "ثاني": 2, "اثنين": 2, "اثنان": 2,
         "الثالث": 3, "ثالث": 3, "ثلاثه": 3, "ثلاثة": 3,
-        "الرابع": 4, "رابع": 4, "اربعه": 4, "اربعه": 4, "أربعة": 4,
+        "الرابع": 4, "رابع": 4, "اربعه": 4, "أربعة": 4,
         "الخامس": 5, "خامس": 5, "خمسه": 5, "خمسة": 5,
     }
     for word, idx in ar_map.items():
@@ -1902,6 +1977,233 @@ async def handle_webhook(req: Request, bot_key: str):
 
 
 # ---------------------------
+# Share Page Routes (Amro only)
+# ---------------------------
+@app.get("/amro/card/{token}.png")
+async def amro_card_png(token: str):
+    file_path = public_card_file_path("amro", token)
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    media_type, _ = mimetypes.guess_type(str(file_path))
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type or "image/png",
+        filename=f"amro-card-{token}.png",
+    )
+
+
+@app.get("/amro/share/{token}", response_class=HTMLResponse)
+async def amro_share_page(token: str):
+    file_path = public_card_file_path("amro", token)
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Card not found")
+
+    image_url = f"/amro/card/{quote(token)}.png"
+
+    html = f"""<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>بطاقة التهنئة</title>
+  <meta name="theme-color" content="#0f172a" />
+  <meta property="og:title" content="بطاقة تهنئة" />
+  <meta property="og:description" content="عرض ومشاركة بطاقة التهنئة" />
+  <meta property="og:image" content="{image_url}" />
+  <style>
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, Arial, sans-serif;
+      background: #f4f7fb;
+      color: #111827;
+      padding: 18px;
+    }}
+    .wrap {{
+      max-width: 680px;
+      margin: 0 auto;
+    }}
+    .card {{
+      background: #ffffff;
+      border-radius: 22px;
+      box-shadow: 0 10px 35px rgba(0,0,0,0.10);
+      overflow: hidden;
+      padding: 14px;
+    }}
+    .title {{
+      text-align: center;
+      font-weight: 800;
+      font-size: 24px;
+      margin: 10px 0 14px;
+    }}
+    .subtitle {{
+      text-align: center;
+      font-size: 15px;
+      color: #475569;
+      margin: 0 0 14px;
+      line-height: 1.8;
+    }}
+    .img-box {{
+      background: #eef2f7;
+      border-radius: 18px;
+      padding: 10px;
+    }}
+    .img-box img {{
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 14px;
+      object-fit: contain;
+      background: #fff;
+    }}
+    .actions {{
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }}
+    .btn {{
+      width: 100%;
+      border: none;
+      border-radius: 18px;
+      padding: 18px 16px;
+      font-size: 20px;
+      font-weight: 800;
+      text-decoration: none;
+      display: block;
+      text-align: center;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }}
+    .btn-share {{
+      background: #16a34a;
+      color: white;
+    }}
+    .btn-download {{
+      background: #0f172a;
+      color: white;
+    }}
+    .btn-open {{
+      background: #e2e8f0;
+      color: #0f172a;
+    }}
+    .note {{
+      margin-top: 14px;
+      text-align: center;
+      font-size: 14px;
+      color: #64748b;
+      line-height: 1.8;
+      min-height: 24px;
+    }}
+    .small {{
+      font-size: 13px;
+      color: #94a3b8;
+      text-align: center;
+      margin-top: 10px;
+    }}
+    @media (max-width: 480px) {{
+      body {{ padding: 12px; }}
+      .btn {{ font-size: 21px; padding: 19px 14px; }}
+      .title {{ font-size: 22px; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="title">بطاقة التهنئة</div>
+      <div class="subtitle">يمكنك مشاركة البطاقة أو تنزيلها على جهازك</div>
+
+      <div class="img-box">
+        <img id="cardImage" src="{image_url}" alt="بطاقة التهنئة" />
+      </div>
+
+      <div class="actions">
+        <button id="shareBtn" class="btn btn-share">📤 مشاركة البطاقة</button>
+        <a class="btn btn-download" href="{image_url}" download="amro-card.png">⬇️ تنزيل البطاقة</a>
+        <a class="btn btn-open" href="{image_url}" target="_blank" rel="noopener">🖼️ فتح الصورة</a>
+      </div>
+
+      <div id="note" class="note"></div>
+      <div class="small">في بعض الأجهزة القديمة قد يتم استخدام التنزيل أو مشاركة الرابط كخيار احتياطي</div>
+    </div>
+  </div>
+
+  <script>
+    const shareBtn = document.getElementById('shareBtn');
+    const note = document.getElementById('note');
+    const imageUrl = "{image_url}";
+    const absoluteImageUrl = new URL(imageUrl, window.location.origin).href;
+
+    function setNote(text) {{
+      note.textContent = text || "";
+    }}
+
+    async function fallbackShareUrl() {{
+      try {{
+        if (navigator.share) {{
+          await navigator.share({{
+            title: "بطاقة التهنئة",
+            text: "بطاقة التهنئة",
+            url: absoluteImageUrl
+          }});
+          return true;
+        }}
+      }} catch (err) {{
+        console.log("fallback share url cancelled or failed", err);
+      }}
+      return false;
+    }}
+
+    async function shareFileIfSupported() {{
+      try {{
+        setNote("جاري تجهيز المشاركة...");
+
+        const res = await fetch(absoluteImageUrl, {{ cache: "no-store" }});
+        if (!res.ok) throw new Error("failed to fetch image");
+
+        const blob = await res.blob();
+        const file = new File([blob], "amro-card.png", {{ type: blob.type || "image/png" }});
+
+        if (navigator.canShare && navigator.canShare({{ files: [file] }})) {{
+          await navigator.share({{
+            files: [file],
+            title: "بطاقة التهنئة",
+            text: "بطاقة التهنئة"
+          }});
+          setNote("تم فتح قائمة المشاركة");
+          return true;
+        }}
+
+        setNote("هذا الجهاز لا يدعم مشاركة الملف مباشرة. يمكنك التنزيل أو مشاركة الرابط.");
+        return false;
+      }} catch (err) {{
+        console.log("share file failed", err);
+        setNote("تعذر فتح مشاركة الملف مباشرة. سيتم تجربة مشاركة الرابط.");
+        return false;
+      }}
+    }}
+
+    shareBtn.addEventListener('click', async () => {{
+      const okFile = await shareFileIfSupported();
+      if (okFile) return;
+
+      const okUrl = await fallbackShareUrl();
+      if (okUrl) {{
+        setNote("تم فتح مشاركة الرابط");
+        return;
+      }}
+
+      setNote("هذا الجهاز لا يدعم المشاركة المباشرة. اضغط تنزيل البطاقة ثم شاركها من الجهاز.");
+    }});
+  </script>
+</body>
+</html>
+"""
+    return HTMLResponse(content=html)
+
+
+# ---------------------------
 # Startup + Routes
 # ---------------------------
 @app.on_event("startup")
@@ -1913,7 +2215,7 @@ async def startup():
             asyncio.create_task(worker_loop(queue_name, i + 1))
 
     log.info(
-        "App started (workers_per_queue=%s, max_queue=%s, gen_concurrency_per_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss, sheet=%s/%s, instance=%s, output_folder=%s)",
+        "App started (workers_per_queue=%s, max_queue=%s, gen_concurrency_per_queue=%s, gen_rate_limit=%ss, fp_dedup=%ss, sheet=%s/%s, instance=%s, output_folder=%s, public_base_url=%s, public_cards_dir=%s)",
         WORKER_COUNT,
         MAX_QUEUE_SIZE,
         GEN_CONCURRENCY,
@@ -1923,6 +2225,8 @@ async def startup():
         SHEET_TAB,
         INSTANCE_NAME,
         OUTPUT_FOLDER_ID or "not-set",
+        guess_base_url() or "not-set",
+        str(PUBLIC_CARDS_DIR),
     )
 
     log.info("Active bots on this instance: %s", ", ".join(BOTS.keys()))
@@ -1943,6 +2247,8 @@ def home():
         "instance": INSTANCE_NAME,
         "active_bots": list(BOTS.keys()),
         "output_folder_set": bool(OUTPUT_FOLDER_ID),
+        "public_base_url": guess_base_url(),
+        "public_cards_dir": str(PUBLIC_CARDS_DIR),
         "queues": {
             QUEUE_ARABIA_WARD: {
                 "bots": ["alarabia", "kounuz_alward"],
