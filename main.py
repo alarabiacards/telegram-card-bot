@@ -44,9 +44,6 @@ RETRY_MAX_DELAY = float(os.getenv("RETRY_MAX_DELAY", "8.0"))
 
 FP_DEDUP_SECONDS = int(os.getenv("FP_DEDUP_SECONDS", "60"))
 
-TG_API = "https://api.telegram.org/bot{}/{}"
-GEN_COMMANDS = {"GEN", "CONFIRM_GEN"}
-
 # Per-queue generation concurrency
 GEN_CONCURRENCY = int(os.getenv("GEN_CONCURRENCY", "1"))
 
@@ -517,8 +514,8 @@ def kb_amro_share_webapp(webapp_url: str) -> dict:
 def msg_amro_share_webapp() -> str:
     return (
         "للمشاركة السريعة:\n\n"
-        "اضغط زر (مشاركة البطاقة)، ثم إن لم تظهر المشاركة تلقائيًا "
-        "اضغط الزر الكبير داخل النافذة."
+        "اضغط زر (مشاركة البطاقة)، وإذا لم تظهر نافذة المشاركة مباشرة "
+        "فاضغط الزر الكبير داخل الصفحة."
     )
 
 
@@ -2010,7 +2007,7 @@ async def amro_share_file(token: str):
         content=item["png_bytes"],
         media_type="image/png",
         headers={
-            "Cache-Control": "no-store, max-age=0",
+            "Cache-Control": "private, max-age=300",
             "Content-Disposition": f'inline; filename="amro-card-{token}.png"',
         },
     )
@@ -2028,7 +2025,10 @@ async def amro_share_mini(token: str):
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
+  />
   <title>مشاركة البطاقة</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
@@ -2043,6 +2043,9 @@ async def amro_share_mini(token: str):
       color: #0f172a;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Tahoma, Arial, sans-serif;
     }}
+    body {{
+      min-height: 100vh;
+    }}
     .wrap {{
       min-height: 100vh;
       display: flex;
@@ -2052,7 +2055,7 @@ async def amro_share_mini(token: str):
     }}
     .card {{
       width: 100%;
-      max-width: 520px;
+      max-width: 540px;
       background: #ffffff;
       border-radius: 24px;
       box-shadow: 0 10px 35px rgba(15, 23, 42, 0.12);
@@ -2060,14 +2063,14 @@ async def amro_share_mini(token: str):
     }}
     .title {{
       text-align: center;
-      font-size: 24px;
+      font-size: 26px;
       font-weight: 800;
       margin-bottom: 10px;
     }}
     .sub {{
       text-align: center;
-      font-size: 15px;
-      line-height: 1.8;
+      font-size: 16px;
+      line-height: 1.9;
       color: #475569;
       margin-bottom: 14px;
     }}
@@ -2089,11 +2092,12 @@ async def amro_share_mini(token: str):
       border: 0;
       border-radius: 18px;
       padding: 18px 14px;
-      font-size: 22px;
+      font-size: 24px;
       font-weight: 800;
       cursor: pointer;
       background: #16a34a;
       color: #fff;
+      margin-top: 8px;
     }}
     .btn:disabled {{
       opacity: 0.65;
@@ -2102,16 +2106,17 @@ async def amro_share_mini(token: str):
     .note {{
       text-align: center;
       margin-top: 12px;
-      font-size: 14px;
+      font-size: 15px;
       line-height: 1.8;
       color: #64748b;
-      min-height: 24px;
+      min-height: 30px;
     }}
     .tiny {{
       text-align: center;
       margin-top: 8px;
-      font-size: 12px;
+      font-size: 13px;
       color: #94a3b8;
+      line-height: 1.8;
     }}
   </style>
 </head>
@@ -2119,7 +2124,7 @@ async def amro_share_mini(token: str):
   <div class="wrap">
     <div class="card">
       <div class="title">مشاركة البطاقة</div>
-      <div class="sub">سنحاول فتح مشاركة الجوال مباشرة</div>
+      <div class="sub">سنحاول فتح المشاركة مباشرة على الجوال</div>
 
       <div class="preview">
         <img src="{image_url}" alt="بطاقة التهنئة" />
@@ -2127,7 +2132,7 @@ async def amro_share_mini(token: str):
 
       <button id="shareBtn" class="btn">📤 مشاركة البطاقة</button>
       <div id="note" class="note"></div>
-      <div class="tiny">إذا لم تدعم المشاركة المباشرة على هذا الجهاز، سيظهر لك خيار فتح الصورة</div>
+      <div class="tiny">إذا لم تظهر المشاركة تلقائيًا، اضغط الزر مرة أخرى</div>
     </div>
   </div>
 
@@ -2145,19 +2150,32 @@ async def amro_share_mini(token: str):
     const shareBtn = document.getElementById("shareBtn");
     const note = document.getElementById("note");
     const absoluteImageUrl = {json.dumps(image_url)};
+    let isBusy = false;
+    let autoTried = false;
 
     function setNote(text) {{
       note.textContent = text || "";
     }}
 
     async function buildShareFile() {{
-      const res = await fetch(absoluteImageUrl, {{ cache: "no-store" }});
+      const res = await fetch(absoluteImageUrl, {{
+        cache: "no-store",
+        credentials: "omit"
+      }});
       if (!res.ok) throw new Error("failed_to_fetch_image");
       const blob = await res.blob();
       return new File([blob], "amro-card.png", {{ type: blob.type || "image/png" }});
     }}
 
-    async function doShare() {{
+    function openWhatsAppFallback() {{
+      const text = "بطاقة التهنئة\\n" + absoluteImageUrl;
+      const waUrl = "https://wa.me/?text=" + encodeURIComponent(text);
+      window.location.href = waUrl;
+    }}
+
+    async function doShare(manual = false) {{
+      if (isBusy) return;
+      isBusy = true;
       shareBtn.disabled = true;
       setNote("جاري فتح المشاركة...");
 
@@ -2170,7 +2188,7 @@ async def amro_share_mini(token: str):
             title: "بطاقة التهنئة",
             text: "بطاقة التهنئة"
           }});
-          setNote("تم فتح المشاركة");
+          setNote("");
           return;
         }}
 
@@ -2180,25 +2198,45 @@ async def amro_share_mini(token: str):
             text: "بطاقة التهنئة",
             url: absoluteImageUrl
           }});
-          setNote("تم فتح المشاركة");
+          setNote("");
           return;
         }}
 
-        window.open(absoluteImageUrl, "_blank");
-        setNote("تم فتح الصورة. شاركها من الجهاز.");
+        openWhatsAppFallback();
+        setNote("");
       }} catch (err) {{
         console.log("share failed", err);
-        setNote("اضغط مرة أخرى، أو شارك الصورة بعد فتحها.");
+
+        const errName = (err && err.name) ? err.name : "";
+        if (errName === "AbortError") {{
+          setNote("");
+          return;
+        }}
+
+        if (manual) {{
+          try {{
+            openWhatsAppFallback();
+            setNote("");
+            return;
+          }} catch (waErr) {{
+            console.log("whatsapp fallback failed", waErr);
+          }}
+        }}
+
+        setNote("اضغط زر مشاركة البطاقة");
       }} finally {{
+        isBusy = false;
         shareBtn.disabled = false;
       }}
     }}
 
-    shareBtn.addEventListener("click", doShare);
+    shareBtn.addEventListener("click", () => doShare(true));
 
     window.addEventListener("load", async () => {{
+      if (autoTried) return;
+      autoTried = true;
       try {{
-        await doShare();
+        await doShare(false);
       }} catch (e) {{
         console.log("auto share blocked", e);
       }}
