@@ -2409,9 +2409,11 @@ async def share_mini(token: str):
 
     const I18N = {{
       ar: {{
-        pageTitle: "مشاركة البطاقة",
-        title: "مشاركة البطاقة",
-        subtitle: "في الآيفون مشاركة، وفي الأندرويد حفظ البطاقة",
+        pageTitleShare: "مشاركة البطاقة",
+        pageTitleSave: "حفظ البطاقة",
+        titleShare: "مشاركة البطاقة",
+        titleSave: "حفظ البطاقة",
+        subtitle: "",
         shareBtn: "📤 مشاركة البطاقة",
         saveBtn: "💾 حفظ البطاقة",
         openBtn: "🖼️ فتح الصورة",
@@ -2428,9 +2430,11 @@ async def share_mini(token: str):
         imageAlt: "بطاقة التهنئة"
       }},
       en: {{
-        pageTitle: "Share Card",
-        title: "Share Card",
-        subtitle: "On iPhone you can share, and on Android you can save the card",
+        pageTitleShare: "Share Card",
+        pageTitleSave: "Save Card",
+        titleShare: "Share Card",
+        titleSave: "Save Card",
+        subtitle: "",
         shareBtn: "📤 Share Card",
         saveBtn: "💾 Save Card",
         openBtn: "🖼️ Open Image",
@@ -2452,7 +2456,6 @@ async def share_mini(token: str):
 
     document.documentElement.lang = LANG;
     document.documentElement.dir = LANG === "ar" ? "rtl" : "ltr";
-    document.title = T.pageTitle;
 
     const titleEl = document.getElementById("title");
     const subtitleEl = document.getElementById("subtitle");
@@ -2461,8 +2464,6 @@ async def share_mini(token: str):
     const openBtn = document.getElementById("openBtn");
     const note = document.getElementById("note");
 
-    titleEl.textContent = T.title;
-    subtitleEl.textContent = T.subtitle;
     openBtn.textContent = T.openBtn;
     cardImage.alt = T.imageAlt;
 
@@ -2492,6 +2493,15 @@ async def share_mini(token: str):
     }}
 
     const ANDROID_SAVE_MODE = isAndroid() && !isIOS();
+
+    document.title = ANDROID_SAVE_MODE ? T.pageTitleSave : T.pageTitleShare;
+    titleEl.textContent = ANDROID_SAVE_MODE ? T.titleSave : T.titleShare;
+    subtitleEl.textContent = T.subtitle || "";
+
+    if (!subtitleEl.textContent.trim()) {{
+      subtitleEl.style.display = "none";
+    }}
+
     shareBtn.textContent = ANDROID_SAVE_MODE ? T.saveBtn : T.shareBtn;
 
     let isBusy = false;
